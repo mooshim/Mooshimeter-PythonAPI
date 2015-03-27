@@ -20,6 +20,7 @@ class BytePack:
             while b:
                 self.putByte(v&0xFF)
                 v >>= 8
+                b -= 1
         else:
             raise
     def get(self,b=1,t=int):
@@ -30,9 +31,10 @@ class BytePack:
                 r += self.bytes[self.i] << s
                 s += 8
                 self.i += 1
+                b -= 1
             return r
         elif t==float:
-            r = struct.unpack("f",struct.pack("bbbb",self.bytes[self.i:self.i+4]))
+            r = struct.unpack("f",struct.pack("bbbb",*self.bytes[self.i:self.i+4]))
             self.i += 4
             return r
 
@@ -42,7 +44,7 @@ class MeterSettings(BGWrapper.Characteristic):
         :param other: a BGWrapper.Characteristic
         :return:
         """
-        super(MeterSettings,self).__init__(self, parent, handle, uuid)
+        super(MeterSettings,self).__init__(parent, handle, uuid)
         self.present_meter_state = 0
         self.target_meter_state  = 0
         self.trigger_setting     = 0
@@ -83,7 +85,7 @@ class MeterLogSettings(BGWrapper.Characteristic):
         :param other: a BGWrapper.Characteristic
         :return:
         """
-        super(MeterLogSettings,self).__init__(self, parent, handle, uuid)
+        super(MeterLogSettings,self).__init__(parent, handle, uuid)
         self.sd_present            = 0
         self.present_logging_state = 0
         self.logging_error         = 0
@@ -119,7 +121,7 @@ class MeterInfo(BGWrapper.Characteristic):
         :param other: a BGWrapper.Characteristic
         :return:
         """
-        super(MeterInfo,self).__init__(self, parent, handle, uuid)
+        super(MeterInfo,self).__init__(parent, handle, uuid)
         self.pcb_version        = 0
         self.assembly_variant   = 0
         self.lot_number         = 0
@@ -143,7 +145,7 @@ class MeterSample(BGWrapper.Characteristic):
         :param other: a BGWrapper.Characteristic
         :return:
         """
-        super(MeterSample,self).__init__(self, parent, handle, uuid)
+        super(MeterSample,self).__init__(parent, handle, uuid)
         self.reading_lsb = [0,0]
         self.reading_ms  = [0,0]
     def pack(self):
@@ -165,13 +167,13 @@ class MeterName(BGWrapper.Characteristic):
             :param other: a BGWrapper.Characteristic
             :return:
             """
-            super(MeterName,self).__init__(self, parent, handle, uuid)
+            super(MeterName,self).__init__(parent, handle, uuid)
             self.name = "Mooshimeter V.1"
         def pack(self):
             self.byte_value = [ord(c) for c in self.name]
         def unpack(self):
             str(bytearray(self.byte_value))
-class Mooshimeter:
+class Mooshimeter(object):
     class mUUID:
         """
         Static declarations of UUID values in the meter
@@ -221,7 +223,7 @@ class Mooshimeter:
     def connect(self):
         self.p.connect()
         self.p.discover()
-        handles_by_uuid = { (c.uuid,c.handle) for c in self.p.chars.values() }
+        handles_by_uuid = dict((c.uuid,c.handle) for c in self.p.chars.values())
         def assignHandleAndRead(c):
             c.handle = handles_by_uuid[c.uuid]
             c.read()

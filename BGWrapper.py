@@ -17,7 +17,7 @@ uuid_service = [0x28, 0x00]  # 0x2800
 
 #UTILITY CLASSES
 
-class Characteristic:
+class Characteristic(object):
     def __init__(self, parent, handle, uuid):
         """
         :param parent: a Peripheral instance
@@ -53,7 +53,7 @@ class Characteristic:
     def __str__(self):
         return str(self.handle)+":\t"+str(self.uuid)
 
-class Peripheral:
+class Peripheral(object):
     def __init__(self, args):
         """
         This is meant to be initialized from a ble_evt_gap_scan_response
@@ -98,6 +98,8 @@ class Peripheral:
         for group in groups:
             new_group = discoverCharacteristics(self.conn_handle,group['start'],group['end'])
             for c in new_group:
+                # FIXME: For some reason the UUIDs are backwards
+                c['uuid'].reverse()
                 new_c = Characteristic(self,c['chrhandle'],UUID(c['uuid']))
                 self.chars[new_c.handle] = new_c
                 print new_c
@@ -110,13 +112,13 @@ class Peripheral:
             raise
         return rval[0]
     def readByHandle(self,char_handle):
-        read(self.conn_handle,char_handle)
+        return read(self.conn_handle,char_handle)
     def writeByHandle(self,char_handle,payload):
-        write(self.conn_handle,char_handle,payload)
+        return write(self.conn_handle,char_handle,payload)
     def read(self,uuid):
-        self.readByHandle(self.findHandleForUUID(uuid))
+        return self.readByHandle(self.findHandleForUUID(uuid))
     def write(self,uuid,payload):
-        self.writeByHandle(self.findHandleForUUID(uuid),payload)
+        return self.writeByHandle(self.findHandleForUUID(uuid),payload)
     def enableNotify(self,uuid,enable):
         # We need to find the characteristic configuration for the provided UUID
         notify_uuid = UUID(0x2902)
