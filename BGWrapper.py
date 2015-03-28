@@ -28,6 +28,7 @@ class Characteristic(object):
         self.handle = handle
         self.uuid   = uuid
         self.byte_value = []
+        self.notify_cb = None
     def pack(self):
         """
         Subclasses should override this to serialize any instance members
@@ -48,6 +49,14 @@ class Characteristic(object):
     def read(self):
         self.byte_value = self.p.readByHandle(self.handle)
         self.unpack()
+    def onNotify(self, new_value):
+        self.byte_value = new_value
+        self.unpack()
+        if self.notify_cb:
+            self.notify_cb()
+    def enableNotify(self, enable, cb):
+        self.p.enableNotify(self.uuid, enable)
+        self.notify_cb = cb
     def __hash__(self):
         return self.handle
     def __str__(self):
@@ -64,7 +73,7 @@ class Peripheral(object):
         self.rssi = args['rssi']
         self.atype = args['address_type']
         self.conn_handle = -1
-        self.chars = {}
+        self.chars = {} #(handle,Characteristic)
 
         ad_services = []
         this_field = []
@@ -88,6 +97,15 @@ class Peripheral(object):
                             ad_services.append(this_field[-1 - i*16 : -17 - i*16 : -1])
         l=[UUID(s) for s in ad_services]
         self.ad_services = tuple(l)
+
+        # Route the callbacks on notification
+        def notifyHandler(bglib_instance, args):
+            if args['connection'] != self.conn_handle:
+                return
+            if not self.chars.has_key(args['atthandle']):
+                return
+            self.chars[args['atthandle']].onNotify(args['value'])
+        ble.ble_evt_attclient_attribute_value += notifyHandler
     def connect(self):
         self.conn_handle = connect(self)
     def discover(self):
@@ -107,7 +125,7 @@ class Peripheral(object):
         rval = []
         for c in self.chars.values():
             if c.uuid == uuid:
-                rval.append(c)
+                rval.append(c.handle)
         if len(rval) != 1:
             raise
         return rval[0]
@@ -122,9 +140,10 @@ class Peripheral(object):
     def enableNotify(self,uuid,enable):
         # We need to find the characteristic configuration for the provided UUID
         notify_uuid = UUID(0x2902)
-        test_handle = self.findHandleForUUID(uuid) + 1
+        base_handle = self.findHandleForUUID(uuid)
+        test_handle = base_handle + 1
         while True:
-            if test_handle-uuid > 3:
+            if test_handle-base_handle > 3:
                 # FIXME: I'm not sure what the error criteria should be, but if we are trying to enable
                 # notifications for a characteristic that won't accept it we need to throw an error
                 raise
@@ -132,12 +151,20 @@ class Peripheral(object):
                 break
             test_handle += 1
         #test_handle now points at the characteristic config
-        payload = 0
         if(enable):
             payload = (1,0)
         else:
             payload = (0,0)
         return self.writeByHandle(test_handle,payload)
+    def replaceCharacteristic(self,new_char):
+        """
+        Provides a means to register subclasses of Characteristic with the Peripheral
+        :param new_char: Instance of Characteristic or subclass with UUID set.  Handle does not need to be set
+        :return:
+        """
+        handles_by_uuid = dict((c.uuid,c.handle) for c in self.chars.values())
+        new_char.handle = handles_by_uuid[new_char.uuid]
+        self.chars[new_char.handle] = new_char
     def __eq__(self, other):
         return self.sender == other.sender
     def __str__(self):
@@ -169,6 +196,9 @@ def initialize(port="COM4"):
             print "Port error (name='%s', baud='%ld'): %s" % (port, 115200, e)
             print "================================================================"
             exit(2)
+
+def idle():
+    ble.check_activity(ser)
 
 def startScan():
     # set scan parameters
@@ -296,11 +326,38 @@ def read(conn, handle):
 def write(conn, handle, value):
     ble.send_command(ser, ble.ble_cmd_attclient_attribute_write(conn,handle,value))
     ble.check_activity(ser)
+    result = []
+    def ackHandler(bglib_instance, args):
+        result.append(None)
+    ble.ble_rsp_attclient_attribute_write += ackHandler
+    ble.ble_evt_attclient_procedure_completed += ackHandler
+    while len(result)<2:
+        idle()
+    ble.ble_rsp_attclient_attribute_write -= ackHandler
+    ble.ble_evt_attclient_procedure_completed -= ackHandler
 
-def enableNotify(conn, handle, enable):
-    pass
-    #ble.send_command(ser, ble.ble_cmd_attclient_attribute_write(connection_handle, att_handle_measurement_ccc, [0x01, 0x00]))
-    ble.check_activity(ser)
+class __waitCB(object):
+    def __init__(self,i,r):
+        self.i=i
+        self.r=r
+    def cb(self,ble_instance,args):
+        self.r[self.i]=args
+
+def __waitFor(*args):
+    """
+    Runs a check_activity loop until the rsps and events provided in *args all come in.
+    :param args:
+    :return:
+    """
+    retval = [None for a in args]
+    cbs = [__waitCB(i,retval) for i in range(len(args))]
+    for i in range(len(args)):
+        args[i] += cbs[i].cb
+    while None in retval:
+        idle()
+    for i in range(len(args)):
+        args[i] -= cbs[i].cb
+    return retval
 
 # add handler for BGAPI timeout condition (hopefully won't happen)
 def timeoutHandler(bglib_instance,args):

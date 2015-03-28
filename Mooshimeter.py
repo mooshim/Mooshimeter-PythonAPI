@@ -13,7 +13,7 @@ class BytePack:
         self.bytes.append(v)
     def put(self,v,b=1):
         if type(v) == float:
-            v = struct.unpack("bbbb",struct.pack("f",v))
+            v = struct.unpack("BBBB",struct.pack("f",v))
             for e in v:
                 self.putByte(e)
         elif type(v) == int:
@@ -34,11 +34,32 @@ class BytePack:
                 b -= 1
             return r
         elif t==float:
-            r = struct.unpack("f",struct.pack("bbbb",*self.bytes[self.i:self.i+4]))
+            r = struct.unpack("f",struct.pack("BBBB",*self.bytes[self.i:self.i+4]))
             self.i += 4
-            return r
+            return r[0]
 
 class MeterSettings(BGWrapper.Characteristic):
+    METER_SHUTDOWN  = 0
+    METER_STANDBY   = 1
+    METER_PAUSED    = 2
+    METER_RUNNING   = 3
+    METER_HIBERNATE = 4
+
+    METER_MEASURE_SETTINGS_ISRC_ON         = 0x01
+    METER_MEASURE_SETTINGS_ISRC_LVL        = 0x02
+    METER_MEASURE_SETTINGS_ACTIVE_PULLDOWN = 0x04
+
+    METER_CALC_SETTINGS_DEPTH_LOG2 = 0x0F
+    METER_CALC_SETTINGS_MEAN       = 0x10
+    METER_CALC_SETTINGS_ONESHOT    = 0x20
+    METER_CALC_SETTINGS_MS         = 0x40
+
+    ADC_SETTINGS_SAMPLERATE_MASK = 0x07
+    ADC_SETTINGS_GPIO_MASK = 0x30
+
+    METER_CH_SETTINGS_PGA_MASK = 0x70
+    METER_CH_SETTINGS_INPUT_MASK = 0x0F
+
     def __init__(self, parent, handle, uuid):
         """
         :param other: a BGWrapper.Characteristic
@@ -79,6 +100,28 @@ class MeterSettings(BGWrapper.Characteristic):
         self.chset[0]            = b.get( )
         self.chset[1]            = b.get( )
         self.adc_settings        = b.get( )
+    def setSampleRate(self,hz):
+        """
+        :param hz: Sample rate in hz.  Valid options are 125,250,500,1000,2000,4000,8000
+        :return:
+        """
+        bval = 0
+        srate = 125
+        while srate < hz:
+            srate *= 2
+            bval  += 1
+        self.adc_settings &=~self.ADC_SETTINGS_SAMPLERATE_MASK
+        self.adc_settings |= bval
+    def setBufferDepth(self,samples):
+        """
+        :param samples: Number of samples in  a single buffer.  Valid values are powers of 2 up to and including 256
+        :return:
+        """
+        bval = 0
+        while 1<<bval < samples:
+            bval+=1
+        self.calc_settings &= ~self.METER_CALC_SETTINGS_DEPTH_LOG2
+        self.calc_settings |= bval
 class MeterLogSettings(BGWrapper.Characteristic):
     def __init__(self, parent, handle, uuid):
         """
@@ -223,15 +266,16 @@ class Mooshimeter(object):
     def connect(self):
         self.p.connect()
         self.p.discover()
-        handles_by_uuid = dict((c.uuid,c.handle) for c in self.p.chars.values())
         def assignHandleAndRead(c):
-            c.handle = handles_by_uuid[c.uuid]
+            self.p.replaceCharacteristic(c)
             c.read()
         assignHandleAndRead(self.meter_info)
         assignHandleAndRead(self.meter_name)
         assignHandleAndRead(self.meter_settings)
         assignHandleAndRead(self.meter_log_settings)
         assignHandleAndRead(self.meter_sample)
+    def disconnect(self):
+        self.p.disconnect()
 
 if __name__=="__main__":
     BGWrapper.initialize()
@@ -251,3 +295,16 @@ if __name__=="__main__":
             closest = s
     my_meter = Mooshimeter(closest)
     my_meter.connect()
+    my_meter.meter_settings.setBufferDepth(32)
+    my_meter.meter_settings.setSampleRate(125)
+    my_meter.meter_settings.calc_settings |= my_meter.meter_settings.METER_CALC_SETTINGS_MEAN
+    my_meter.meter_settings.target_meter_state = my_meter.meter_settings.METER_RUNNING
+    def notifyCB():
+        print my_meter.meter_sample.reading_lsb[0]
+        print my_meter.meter_sample.reading_lsb[1]
+    my_meter.meter_sample.enableNotify(True,notifyCB)
+    import time
+    time.sleep(1)
+    my_meter.meter_settings.write()
+    while True:
+        BGWrapper.idle()

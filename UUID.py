@@ -6,7 +6,7 @@ class UUID:
             self.bytes = self.__stringToBytes(initializer)
         elif type(initializer) == type(1):
             # Integer initialized, assume a 2 byte UUID
-            self.bytes = (initializer&0xFF, (initializer>>8)&0xFF)
+            self.bytes = ((initializer>>8)&0xFF, (initializer>>0)&0xFF)
         else:
             #Byte array input
             self.bytes = tuple(initializer)
