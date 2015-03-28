@@ -122,6 +122,32 @@ class MeterSettings(BGWrapper.Characteristic):
             bval+=1
         self.calc_settings &= ~self.METER_CALC_SETTINGS_DEPTH_LOG2
         self.calc_settings |= bval
+    def setHVRange(self,range_v):
+        """
+        :param range: Voltage range of the high voltage channels.  Valid values are 1.2, 60 or 600.
+        :return:
+        """
+        self.adc_settings &=~self.ADC_SETTINGS_GPIO_MASK
+        if range_v <= 1.2:
+            pass
+        elif range_v <= 60:
+            self.adc_settings |= 0x10
+        elif range_v <= 600:
+            self.adc_settings |= 0x20
+        return
+    def attachChannelToAux(self,ch):
+        """
+        :param ch: Channel to attach to aux input.  Can be 0 or 1
+        :return:
+        """
+        self.chset[ch] &=~self.METER_CH_SETTINGS_INPUT_MASK
+        self.chset[ch] |= 0x09
+    def detachChannelFromAux(self,ch):
+        """
+        :param ch: Channel to attach to aux input.  Can be 0 or 1
+        :return:
+        """
+        self.chset[ch] &=~self.METER_CH_SETTINGS_INPUT_MASK
 class MeterLogSettings(BGWrapper.Characteristic):
     def __init__(self, parent, handle, uuid):
         """
@@ -276,6 +302,324 @@ class Mooshimeter(object):
         assignHandleAndRead(self.meter_sample)
     def disconnect(self):
         self.p.disconnect()
+    #################
+    # Data conversion
+    #################
+
+        private double getEnob(final int channel) {
+        // Return a rough appoximation of the ENOB of the channel
+        // For the purposes of figuring out how many digits to display
+        // Based on ADS1292 datasheet and some special sauce.
+        // And empirical measurement of CH1 (which is super noisy due to chopper)
+        final double base_enob_table[] = {
+                20.10,
+                19.58,
+                19.11,
+                18.49,
+                17.36,
+                14.91,
+                12.53};
+        final int pga_gain_table[] = {6,1,2,3,4,8,12};
+        final int samplerate_setting =meter_settings.adc_settings & ADC_SETTINGS_SAMPLERATE_MASK;
+        final int buffer_depth_log2 = meter_settings.calc_settings & METER_CALC_SETTINGS_DEPTH_LOG2;
+        double enob = base_enob_table[ samplerate_setting ];
+        int pga_setting = meter_settings.chset[channel];
+        pga_setting &= METER_CH_SETTINGS_PGA_MASK;
+        pga_setting >>= 4;
+        int pga_gain = pga_gain_table[pga_setting];
+        // At lower sample frequencies, pga gain affects noise
+        // At higher frequencies it has no effect
+        double pga_degradation = (1.5/12) * pga_gain * ((6-samplerate_setting)/6.0);
+        enob -= pga_degradation;
+        // Oversampling adds 1 ENOB per factor of 4
+        enob += ((double)buffer_depth_log2)/2.0;
+        //
+        if(channel == 0 && (meter_settings.chset[0] & METER_CH_SETTINGS_INPUT_MASK) == 0 ) {
+            // This is compensation for a bug in RevH, where current sense chopper noise dominates
+            enob -= 2;
+        }
+        return enob;
+    }
+
+    /**
+     * Based on the ENOB and the measurement range for the given channel, determine which digits are
+     * significant in the output.
+     * @param channel The channel index (0 or 1)
+     * @return  A SignificantDigits structure, "high" is the number of digits to the left of the decimal point and "digits" is the number of significant digits
+     */
+
+    public SignificantDigits getSigDigits(final int channel) {
+        SignificantDigits retval = new SignificantDigits();
+        final double enob = getEnob(channel);
+        final double max = lsbToNativeUnits((1<<22),channel);
+        final double max_dig  = Math.log10(max);
+        final double n_digits = Math.log10(Math.pow(2.0, enob));
+        retval.high = (int)(max_dig+1);
+        retval.n_digits = (int) n_digits;
+        return retval;
+    }
+
+    /**
+     * Examines the measurement settings and converts the input (in LSB) to the voltage at the input
+     * of the AFE.  Note this is at the input of the AFE, not the input of the ADC (there is a PGA)
+     * between them
+     * @param reading_lsb   Input reading [LSB]
+     * @param channel       The channel index (0 or 1)
+     * @return  Voltage at AFE input [V]
+     */
+
+    public double lsbToADCInVoltage(final int reading_lsb, final int channel) {
+        // This returns the input voltage to the ADC,
+        final double Vref = 2.5;
+        final double pga_lookup[] = {6,1,2,3,4,8,12};
+        int pga_setting=0;
+        switch(channel) {
+            case 0:
+                pga_setting = meter_settings.chset[0] >> 4;
+                break;
+            case 1:
+                pga_setting = meter_settings.chset[1] >> 4;
+                break;
+            default:
+                Log.i(TAG,"Should not be here");
+                break;
+        }
+        double pga_gain = pga_lookup[pga_setting];
+        return ((double)reading_lsb/(double)(1<<23))*Vref/pga_gain;
+    }
+
+    /**
+     * Converted the voltage at the input of the AFE to the voltage at the HV input by examining the
+     * meter settings
+     * @param adc_voltage   Voltage at the AFE [V]
+     * @return  Voltage at the HV input terminal [V]
+     */
+
+    public double adcVoltageToHV(final double adc_voltage) {
+        switch( (meter_settings.adc_settings & ADC_SETTINGS_GPIO_MASK) >> 4 ) {
+            case 0x00:
+                // 1.2V range
+                return adc_voltage;
+            case 0x01:
+                // 60V range
+                return ((10e6+160e3)/(160e3)) * adc_voltage;
+            case 0x02:
+                // 1000V range
+                return ((10e6+11e3)/(11e3)) * adc_voltage;
+            default:
+                Log.w(TAG,"Invalid setting!");
+                return 0.0;
+        }
+    }
+
+    /**
+     * Convert voltage at the input of the AFE to current through the A terminal
+     * @param adc_voltage   Voltage at the AFE [V]
+     * @return              Current through the A terminal [A]
+     */
+
+    public double adcVoltageToCurrent(final double adc_voltage) {
+        final double rs = 1e-3;
+        final double amp_gain = 80.0;
+        return adc_voltage/(amp_gain*rs);
+    }
+
+    /**
+     * Convert voltage at the input of the AFE to temperature
+     * @param adc_voltage   Voltage at the AFE [V]
+     * @return              Temperature [C]
+     */
+
+    public double adcVoltageToTemp(double adc_voltage) {
+        adc_voltage -= 145.3e-3; // 145.3mV @ 25C
+        adc_voltage /= 490e-6;   // 490uV / C
+        return 25.0 + adc_voltage;
+    }
+
+    /**
+     * Examines the meter settings to determine how much current is flowing out of the current source
+     * (flows out the Active terminal)
+     * @return  Current from the active terminal [A]
+     */
+
+    public double getIsrcCurrent() {
+        if( 0 == (meter_settings.measure_settings & METER_MEASURE_SETTINGS_ISRC_ON) ) {
+            return 0;
+        }
+        if( 0 != (meter_settings.measure_settings & METER_MEASURE_SETTINGS_ISRC_LVL) ) {
+            return 100e-6;
+        } else {
+            return 100e-9;
+        }
+    }
+
+    /**
+     * Converts an ADC reading to the reading at the terminal input
+     * @param lsb   Input reading in LSB
+     * @param ch    Channel index (0 or 1)
+     * @return      Value at the input terminal.  Depending on measurement settings, can be V, A or Ohms
+     */
+
+    public double lsbToNativeUnits(int lsb, final int ch) {
+        double adc_volts = 0;
+        final double ptc_resistance = 7.9;
+        final byte channel_setting = (byte) (meter_settings.chset[ch] & METER_CH_SETTINGS_INPUT_MASK);
+        if(disp_hex[ch]) {
+            return lsb;
+        }
+        switch(channel_setting) {
+            case 0x00:
+                // Regular electrode input
+                switch(ch) {
+                    case 0:
+                        // CH1 offset is treated as an extrinsic offset because it's dominated by drift in the isns amp
+                        adc_volts = lsbToADCInVoltage(lsb,ch);
+                        adc_volts -= offsets[0];
+                        return adcVoltageToCurrent(adc_volts);
+                    case 1:
+                        // CH2 offset is treaded as an intrinsic offset because it's dominated by offset in the ADC itself
+                        lsb -= offsets[1];
+                        adc_volts = lsbToADCInVoltage(lsb,ch);
+                        return adcVoltageToHV(adc_volts);
+                    default:
+                        Log.w(TAG,"Invalid channel");
+                        return 0;
+                }
+            case 0x04:
+                adc_volts = lsbToADCInVoltage(lsb,ch);
+                return adcVoltageToTemp(adc_volts);
+            case 0x09:
+                // CH3 is complicated.  When measuring aux voltage, offset is dominated by intrinsic offsets in the ADC
+                // When measuring resistance, offset is a resistance and must be treated as such
+                final double isrc_current = getIsrcCurrent();
+                if( isrc_current != 0 ) {
+                    // Current source is on, apply compensation for PTC drop
+                    adc_volts = lsbToADCInVoltage(lsb,ch);
+                    adc_volts -= ptc_resistance*isrc_current;
+                    adc_volts -= offsets[2]*isrc_current;
+                } else {
+                    // Current source is off, offset is intrinsic
+                    lsb -= offsets[2];
+                    adc_volts = lsbToADCInVoltage(lsb,ch);
+                }
+                if( disp_ch3_mode == CH3_MODES.RESISTANCE ) {
+                    // Convert to Ohms
+                    return adc_volts/isrc_current;
+                } else {
+                    return adc_volts;
+                }
+            default:
+                Log.w(TAG,"Unrecognized channel setting");
+                return adc_volts;
+        }
+    }
+
+    /**
+     *
+     * @param channel The channel index (0 or 1)
+     * @return A string describing what the channel is measuring
+     */
+
+    public String getDescriptor(final int channel) {
+        final byte channel_setting = (byte) (meter_settings.chset[channel] & METER_CH_SETTINGS_INPUT_MASK);
+        switch( channel_setting ) {
+            case 0x00:
+                switch (channel) {
+                    case 0:
+                        if(disp_ac[channel]){return "Current AC";}
+                        else {return "Current DC";}
+                    case 1:
+                        if(disp_ac[channel]){return "Voltage AC";}
+                        else {return "Voltage DC";}
+                    default:
+                        return "Invalid";
+                }
+            case 0x04:
+                // Temperature sensor
+                return "Temperature";
+            case 0x09:
+                // Channel 3 in
+                switch( disp_ch3_mode ) {
+                    case VOLTAGE:
+                        if(disp_ac[channel]){return "Aux Voltage AC";}
+                        else {return "Aux Voltage DC";}
+                    case RESISTANCE:
+                        return "Resistance";
+                    case DIODE:
+                        return "Diode Test";
+                }
+                break;
+            default:
+                Log.w(TAG,"Unrecognized setting");
+        }
+        return "";
+    }
+
+    /**
+     *
+     * @param channel The channel index (0 or 1)
+     * @return A string containing the units label for the channel
+     */
+
+    public String getUnits(final int channel) {
+        final byte channel_setting = (byte) (meter_settings.chset[channel] & METER_CH_SETTINGS_INPUT_MASK);
+        if(disp_hex[channel]) {
+            return "RAW";
+        }
+        switch( channel_setting ) {
+            case 0x00:
+                switch (channel) {
+                    case 0:
+                        return "A";
+                    case 1:
+                        return "V";
+                    default:
+                        return "?";
+                }
+            case 0x04:
+                return "C";
+            case 0x09:
+                switch( disp_ch3_mode ) {
+                    case VOLTAGE:
+                        return "V";
+                    case RESISTANCE:
+                        return "Ω";
+                    case DIODE:
+                        return "V";
+                }
+            default:
+                Log.w(TAG,"Unrecognized chset[0] setting");
+                return "";
+        }
+    }
+
+    /**
+     *
+     * @param channel The channel index (0 or 1)
+     * @return        A String containing the input label of the channel (V, A, Omega or Internal)
+     */
+
+    public String getInputLabel(final int channel) {
+        final byte channel_setting = (byte) (meter_settings.chset[channel] & METER_CH_SETTINGS_INPUT_MASK);
+        switch( channel_setting ) {
+            case 0x00:
+                switch (channel) {
+                    case 0:
+                        return "A";
+                    case 1:
+                        return "V";
+                    default:
+                        return "?";
+                }
+            case 0x04:
+                return "INT";
+            case 0x09:
+                return "Ω";
+            default:
+                Log.w(TAG,"Unrecognized setting");
+                return "";
+        }
+    }
 
 if __name__=="__main__":
     BGWrapper.initialize()
