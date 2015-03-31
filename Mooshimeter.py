@@ -1,6 +1,9 @@
+# coding=UTF-8
 import BGWrapper
 import struct
 from UUID import *
+
+import math
 
 class BytePack:
     """
@@ -122,6 +125,32 @@ class MeterSettings(BGWrapper.Characteristic):
             bval+=1
         self.calc_settings &= ~self.METER_CALC_SETTINGS_DEPTH_LOG2
         self.calc_settings |= bval
+    def setHVRange(self,range_v):
+        """
+        :param range: Voltage range of the high voltage channels.  Valid values are 1.2, 60 or 600.
+        :return:
+        """
+        self.adc_settings &=~self.ADC_SETTINGS_GPIO_MASK
+        if range_v <= 1.2:
+            pass
+        elif range_v <= 60:
+            self.adc_settings |= 0x10
+        elif range_v <= 600:
+            self.adc_settings |= 0x20
+        return
+    def attachChannelToAux(self,ch):
+        """
+        :param ch: Channel to attach to aux input.  Can be 0 or 1
+        :return:
+        """
+        self.chset[ch] &=~self.METER_CH_SETTINGS_INPUT_MASK
+        self.chset[ch] |= 0x09
+    def detachChannelFromAux(self,ch):
+        """
+        :param ch: Channel to attach to aux input.  Can be 0 or 1
+        :return:
+        """
+        self.chset[ch] &=~self.METER_CH_SETTINGS_INPUT_MASK
 class MeterLogSettings(BGWrapper.Characteristic):
     def __init__(self, parent, handle, uuid):
         """
@@ -249,7 +278,15 @@ class Mooshimeter(object):
         def classForUUID(self,uuid):
             if self._class_by_uuid.has_key(uuid):
                 return self._class_by_uuid[uuid]
-            return 0
+            return None
+
+
+    class CH3_MODES_CLASS(object):
+        pass
+    CH3_MODES = CH3_MODES_CLASS()
+    CH3_MODES.VOLTAGE = 0
+    CH3_MODES.RESISTANCE = 1
+    CH3_MODES.DIODE = 2
 
     def __init__(self, peripheral):
         """
@@ -263,6 +300,14 @@ class Mooshimeter(object):
         self.meter_settings     = MeterSettings(   peripheral,0,self.mUUID.METER_SETTINGS)
         self.meter_log_settings = MeterLogSettings(peripheral,0,self.mUUID.METER_LOG_SETTINGS)
         self.meter_sample       = MeterSample(     peripheral,0,self.mUUID.METER_SAMPLE)
+        # Display and conversion control settings
+        self.disp_ac         = [False,False]
+        self.disp_hex        = [False,False]
+        self.disp_ch3_mode   = self.CH3_MODES.VOLTAGE
+        self.disp_range_auto = [True,True]
+        self.disp_rate_auto  = True
+        self.disp_depth_auto = True
+        self.offsets         = [0,0]
     def connect(self):
         self.p.connect()
         self.p.discover()
@@ -277,34 +322,296 @@ class Mooshimeter(object):
     def disconnect(self):
         self.p.disconnect()
 
+    #################
+    # Data conversion
+    #################
+
+    def getEnob(self, channel):
+        """
+        Return a rough appoximation of the ENOB of the channel
+        For the purposes of figuring out how many digits to display
+        Based on ADS1292 datasheet and some special sauce.
+        And empirical measurement of CH1 (which is super noisy due to chopper)
+        :param channel: 0 or 1
+        :return:
+        """
+        base_enob_table = [
+                20.10,
+                19.58,
+                19.11,
+                18.49,
+                17.36,
+                14.91,
+                12.53]
+        pga_gain_table = [6,1,2,3,4,8,12]
+        samplerate_setting = self.meter_settings.adc_settings & self.meter_settings.ADC_SETTINGS_SAMPLERATE_MASK
+        buffer_depth_log2  = self.meter_settings.calc_settings & self.meter_settings.METER_CALC_SETTINGS_DEPTH_LOG2
+        enob = base_enob_table[ samplerate_setting ]
+        pga_setting = self.meter_settings.chset[channel]
+        pga_setting &= self.meter_settings.METER_CH_SETTINGS_PGA_MASK
+        pga_setting >>= 4
+        pga_gain = pga_gain_table[pga_setting]
+        # At lower sample frequencies, pga gain affects noise
+        # At higher frequencies it has no effect
+        pga_degradation = (1.5/12) * pga_gain * ((6-samplerate_setting)/6.0);
+        enob -= pga_degradation
+        # Oversampling adds 1 ENOB per factor of 4
+        enob += buffer_depth_log2/2.0
+
+        if(channel == 0 and (self.meter_settings.chset[0] & self.meter_settings.METER_CH_SETTINGS_INPUT_MASK) == 0 ):
+            # This is compensation for a bug in RevH, where current sense chopper noise dominates
+            enob -= 2
+        return enob
+
+    def getSigDigits(self, channel):
+        """
+        Based on the ENOB and the measurement range for the given channel, determine which digits are
+        significant in the output.
+        :param channel: The channel index (0 or 1)
+        :return:  A SignificantDigits structure, "high" is the number of digits to the left of the decimal point and "digits" is the number of significant digits
+        """
+        retval = object()
+        enob = self.getEnob(channel)
+        max = self.lsbToNativeUnits((1<<22),channel)
+        max_dig  = math.log10(max)
+        n_digits = math.log10(math.pow(2.0, enob))
+        retval.high = int(max_dig+1)
+        retval.n_digits = int(n_digits)
+        return retval
+
+    def lsbToADCInVoltage(self, reading_lsb, channel):
+        """
+        Examines the measurement settings and converts the input (in LSB) to the voltage at the input
+        of the AFE.  Note this is at the input of the AFE, not the input of the ADC (there is a PGA)
+        between them
+        :param reading_lsb:   Input reading [LSB]
+        :param channel:       The channel index (0 or 1)
+        :return:  Voltage at AFE input [V]
+        """
+        # This returns the input voltage to the ADC,
+        Vref = 2.5
+        pga_lookup = [6,1,2,3,4,8,12]
+        pga_setting = self.meter_settings.chset[channel] >> 4
+        pga_gain = pga_lookup[pga_setting]
+        return (reading_lsb/float(1<<23))*Vref/pga_gain
+
+    def adcVoltageToHV(self, adc_voltage):
+        """
+        Converted the voltage at the input of the AFE to the voltage at the HV input by examining the
+        meter settings
+        :param adc_voltage:   Voltage at the AFE [V]
+        :return:  Voltage at the HV input terminal [V]
+        """
+        s = (self.meter_settings.adc_settings & self.meter_settings.ADC_SETTINGS_GPIO_MASK) >> 4
+        if s == 0x00:
+            # 1.2V range
+            return adc_voltage
+        elif s == 0x01:
+            # 60V range
+            return ((10e6+160e3)/(160e3)) * adc_voltage
+        elif s == 0x02:
+            # 1000V range
+            return ((10e6+11e3)/(11e3)) * adc_voltage
+        else:
+            raise
+
+    def adcVoltageToCurrent(self,adc_voltage):
+        """
+        Convert voltage at the input of the AFE to current through the A terminal
+        :param adc_voltage:   Voltage at the AFE [V]
+        :return:              Current through the A terminal [A]
+        """
+        rs = 1e-3
+        amp_gain = 80.0
+        return adc_voltage/(amp_gain*rs)
+
+    def adcVoltageToTemp(self, adc_voltage):
+        """
+        Convert voltage at the input of the AFE to temperature
+        :param adc_voltage:   Voltage at the AFE [V]
+        :return:              Temperature [C]
+        """
+        adc_voltage -= 145.3e-3 # 145.3mV @ 25C
+        adc_voltage /= 490e-6   # 490uV / C
+        return 25.0 + adc_voltage
+
+    def getIsrcCurrent(self):
+        """
+        Examines the meter settings to determine how much current is flowing out of the current source
+        (flows out the Active terminal)
+        :return:  Current from the active terminal [A]
+        """
+        if 0 == (self.meter_settings.measure_settings & self.meter_settings.METER_MEASURE_SETTINGS_ISRC_ON):
+            return 0
+        if 0 != (self.meter_settings.measure_settings & self.meter_settings.METER_MEASURE_SETTINGS_ISRC_LVL):
+            return 100e-6
+        else:
+            return 100e-9
+
+    def lsbToNativeUnits(self, lsb, ch):
+        """
+        Converts an ADC reading to the reading at the terminal input
+        :param lsb:   Input reading in LSB
+        :param ch:    Channel index (0 or 1)
+        :return:      Value at the input terminal.  Depending on measurement settings, can be V, A or Ohms
+        """
+        ptc_resistance = 7.9
+        channel_setting = (self.meter_settings.chset[ch] & self.meter_settings.METER_CH_SETTINGS_INPUT_MASK)
+        if self.disp_hex[ch]:
+            return lsb
+        if channel_setting == 0x00:
+            # Regular electrode input
+            if ch == 0:
+                # CH1 offset is treated as an extrinsic offset because it's dominated by drift in the isns amp
+                adc_volts = self.lsbToADCInVoltage(lsb,ch)
+                adc_volts -= self.offsets[0]
+                return self.adcVoltageToCurrent(adc_volts)
+            elif ch == 1:
+                # CH2 offset is treated as an intrinsic offset because it's dominated by offset in the ADC itself
+                lsb -= self.offsets[1]
+                adc_volts = self.lsbToADCInVoltage(lsb,ch)
+                return self.adcVoltageToHV(adc_volts)
+            else:
+                raise
+        elif channel_setting == 0x04:
+            adc_volts = self.lsbToADCInVoltage(lsb,ch)
+            return self.adcVoltageToTemp(adc_volts)
+        elif channel_setting == 0x09:
+            # CH3 is complicated.  When measuring aux voltage, offset is dominated by intrinsic offsets in the ADC
+            # When measuring resistance, offset is a resistance and must be treated as such
+            isrc_current = self.getIsrcCurrent()
+            if isrc_current != 0:
+                # Current source is on, apply compensation for PTC drop
+                adc_volts = self.lsbToADCInVoltage(lsb,ch)
+                adc_volts -= ptc_resistance*isrc_current
+                adc_volts -= self.offsets[2]*isrc_current
+            else:
+                # Current source is off, offset is intrinsic
+                lsb -= self.offsets[2]
+                adc_volts = self.lsbToADCInVoltage(lsb,ch)
+            if self.disp_ch3_mode == self.CH3_MODES.RESISTANCE:
+                # Convert to Ohms
+                return adc_volts/isrc_current
+            else:
+                return adc_volts
+        else:
+            raise
+
+    def getDescriptor(self,channel):
+        """
+        :param channel: The channel index (0 or 1)
+        :return: A string describing what the channel is measuring
+        """
+        channel_setting = self.meter_settings.chset[channel] & self.meter_settings.METER_CH_SETTINGS_INPUT_MASK
+        if channel_setting == 0x00:
+            if channel == 0:
+                if self.disp_ac[channel]:
+                    return "Current AC"
+                return "Current DC"
+            elif channel == 1:
+                if self.disp_ac[channel]:
+                    return "Voltage AC"
+                return "Voltage DC"
+            else:
+                raise
+        elif channel_setting == 0x04:
+            # Temperature sensor
+            return "Temperature"
+        elif channel_setting == 0x09:
+            # Channel 3 in
+            if self.disp_ch3_mode == self.VOLTAGE:
+                if self.disp_ac[channel]:
+                    return "Aux Voltage AC"
+                else:
+                    return "Aux Voltage DC"
+            elif self.disp_ch3_mode == self.RESISTANCE:
+                    return "Resistance"
+            elif self.disp_ch3_mode == self.DIODE:
+                    return "Diode Test"
+        else:
+            raise
+
+    def getUnits(self, channel):
+        """
+        :param channel: The channel index (0 or 1)
+        :return:  A string containing the units label for the channel
+        """
+        channel_setting = self.meter_settings.chset[channel] & self.meter_settings.METER_CH_SETTINGS_INPUT_MASK
+        if self.disp_hex[channel]:
+            return "RAW"
+        if channel_setting == 0x00:
+            if channel == 0:
+                return "A"
+            elif channel == 1:
+                return "V"
+            else:
+                raise
+        elif channel_setting == 0x04:
+            return "C"
+        elif channel_setting == 0x09:
+            if self.disp_ch3_mode == self.VOLTAGE:
+                return "V"
+            elif self.disp_ch3_mode == self.RESISTANCE:
+                return "Ω"
+            elif self.disp_ch3_mode == self.DIODE:
+                return "V"
+            else:
+                raise
+        else:
+            raise
+
+    def getInputLabel(self, channel):
+        """
+        :param channel: The channel index (0 or 1)
+        :return: A String containing the input label of the channel (V, A, Omega or Internal)
+        """
+        channel_setting = self.meter_settings.chset[channel] & self.meter_settings.METER_CH_SETTINGS_INPUT_MASK
+        if channel_setting == 0x00:
+            if channel == 0:
+                return "A"
+            elif channel == 1:
+                return "V"
+            else:
+                raise
+        elif channel_setting == 0x04:
+            return "INT"
+        elif channel_setting == 0x09:
+            return "Ω"
+        else:
+            raise
+
 if __name__=="__main__":
-    BGWrapper.initialize()
+    # Set up the lower level to talk to a BLED112 in port COM4
+    BGWrapper.initialize("COM4")
+    # Scan for 3 seconds
     scan_results = BGWrapper.scan(3)
-    meters = []
-    for p in scan_results:
-        if Mooshimeter.mUUID.METER_SERVICE in p.ad_services:
-            meters.append(p)
-    #meters = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
+    # Filter for devices advertising the Mooshimeter service
+    meters = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
     if len(meters) == 0:
         print "No Mooshimeters found"
         exit(0)
-    closest = meters[0]
-    for s in meters:
-        print s
-        if s.rssi > closest.rssi:
-            closest = s
+    # Display detected meters
+    for m in meters:
+        print m
+    # Connect to the meter with the strongest signal
+    closest = max(meters, key=lambda x: x.rssi)
     my_meter = Mooshimeter(closest)
     my_meter.connect()
-    my_meter.meter_settings.setBufferDepth(32)
-    my_meter.meter_settings.setSampleRate(125)
+    # Apply some default settings
+    my_meter.meter_settings.setBufferDepth(32) #samples
+    my_meter.meter_settings.setSampleRate(125) #Hz
+    my_meter.meter_settings.setHVRange(60) #volts
+    # Calculate the mean
     my_meter.meter_settings.calc_settings |= my_meter.meter_settings.METER_CALC_SETTINGS_MEAN
+    # Calculate the RMS as well
+    my_meter.meter_settings.calc_settings |= my_meter.meter_settings.METER_CALC_SETTINGS_MS
     my_meter.meter_settings.target_meter_state = my_meter.meter_settings.METER_RUNNING
     def notifyCB():
-        print my_meter.meter_sample.reading_lsb[0]
-        print my_meter.meter_sample.reading_lsb[1]
+        #This will be called every time a new sample is received
+        print my_meter.lsbToNativeUnits(my_meter.meter_sample.reading_lsb[0],0), my_meter.getUnits(0)
+        print my_meter.lsbToNativeUnits(my_meter.meter_sample.reading_lsb[1],1), my_meter.getUnits(1)
     my_meter.meter_sample.enableNotify(True,notifyCB)
-    import time
-    time.sleep(1)
     my_meter.meter_settings.write()
     while True:
+        # This call checks the serial port and processes new data
         BGWrapper.idle()
