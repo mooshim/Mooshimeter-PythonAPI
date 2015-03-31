@@ -581,6 +581,7 @@ class Mooshimeter(object):
             raise
 
 if __name__=="__main__":
+    from operator import attrgetter
     # Set up the lower level to talk to a BLED112 in port COM4
     BGWrapper.initialize("COM4")
     # Scan for 3 seconds
@@ -593,25 +594,31 @@ if __name__=="__main__":
     # Display detected meters
     for m in meters:
         print m
+    def connectToMeterAndStream(p):
+        m = Mooshimeter(p)
+        m.connect()
+        # Apply some default settings
+        m.meter_settings.setBufferDepth(32) #samples
+        m.meter_settings.setSampleRate(125) #Hz
+        m.meter_settings.setHVRange(60) #volts
+        # Calculate the mean
+        m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MEAN
+        # Calculate the RMS as well
+        m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MS
+        m.meter_settings.target_meter_state = m.meter_settings.METER_RUNNING
+        def notifyCB():
+            #This will be called every time a new sample is received
+            print m.p.conn_handle
+            print m.lsbToNativeUnits(m.meter_sample.reading_lsb[0],0), m.getUnits(0)
+            print m.lsbToNativeUnits(m.meter_sample.reading_lsb[1],1), m.getUnits(1)
+        m.meter_sample.enableNotify(True,notifyCB)
+        m.meter_settings.write()
+
     # Connect to the meter with the strongest signal
-    closest = max(meters, key=lambda x: x.rssi)
-    my_meter = Mooshimeter(closest)
-    my_meter.connect()
-    # Apply some default settings
-    my_meter.meter_settings.setBufferDepth(32) #samples
-    my_meter.meter_settings.setSampleRate(125) #Hz
-    my_meter.meter_settings.setHVRange(60) #volts
-    # Calculate the mean
-    my_meter.meter_settings.calc_settings |= my_meter.meter_settings.METER_CALC_SETTINGS_MEAN
-    # Calculate the RMS as well
-    my_meter.meter_settings.calc_settings |= my_meter.meter_settings.METER_CALC_SETTINGS_MS
-    my_meter.meter_settings.target_meter_state = my_meter.meter_settings.METER_RUNNING
-    def notifyCB():
-        #This will be called every time a new sample is received
-        print my_meter.lsbToNativeUnits(my_meter.meter_sample.reading_lsb[0],0), my_meter.getUnits(0)
-        print my_meter.lsbToNativeUnits(my_meter.meter_sample.reading_lsb[1],1), my_meter.getUnits(1)
-    my_meter.meter_sample.enableNotify(True,notifyCB)
-    my_meter.meter_settings.write()
+    meters = sorted(meters, key=attrgetter('rssi'),reverse=True)
+    connectToMeterAndStream(meters[0])
+    #if len(meters) >= 2:
+        #connectToMeterAndStream(meters[1])
     while True:
         # This call checks the serial port and processes new data
         BGWrapper.idle()

@@ -259,9 +259,11 @@ def discoverServiceGroups(conn):
         service_groups = []
         finish = []
         def found_cb(bglib_instance, args):
-            service_groups.append(args)
+            if args['connection'] == conn:
+                service_groups.append(args)
         def finished_cb(bglib_instance, args):
-            finish.append(0)
+            if args['connection'] == conn:
+                finish.append(0)
         ble.ble_evt_attclient_group_found += found_cb
         ble.ble_evt_attclient_procedure_completed += finished_cb
         while not len(finish):
@@ -277,9 +279,11 @@ def discoverCharacteristics(conn, handle_start, handle_end):
         chars = []
         finish = []
         def found_cb(bglib_instance, args):
-            chars.append(args)
+            if args['connection'] == conn:
+                chars.append(args)
         def finished_cb(bglib_instance, args):
-            finish.append(0)
+            if args['connection'] == conn:
+                finish.append(0)
         ble.ble_evt_attclient_find_information_found += found_cb
         ble.ble_evt_attclient_procedure_completed += finished_cb
         while not len(finish):
@@ -298,11 +302,14 @@ def read(conn, handle):
     payload = []
     fail = []
     def resultHandler(bglib_instance, args):
-        result.append(args['result'])
+        if args['connection'] == conn:
+            result.append(args['result'])
     def payloadHandler(bglib_instance, args):
-        payload.append(args['value'])
+        if args['connection'] == conn:
+            payload.append(args['value'])
     def failHandler(bglib_instance, args):
-        fail.append(0)
+        if args['connection'] == conn:
+            fail.append(0)
     ble.ble_rsp_attclient_read_by_handle += resultHandler
     ble.ble_evt_attclient_attribute_value += payloadHandler
     ble.ble_evt_attclient_procedure_completed += failHandler
@@ -328,7 +335,8 @@ def write(conn, handle, value):
     ble.check_activity(ser)
     result = []
     def ackHandler(bglib_instance, args):
-        result.append(None)
+        if args['connection'] == conn:
+            result.append(None)
     ble.ble_rsp_attclient_attribute_write += ackHandler
     ble.ble_evt_attclient_procedure_completed += ackHandler
     while len(result)<2:
