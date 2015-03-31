@@ -26,15 +26,20 @@ class BytePack:
                 b -= 1
         else:
             raise
-    def get(self,b=1,t=int):
+    def get(self,b=1,t=int,signed=False):
         if t == int:
             r = 0
             s = 0
+            top_b = 0
             while b:
-                r += self.bytes[self.i] << s
+                top_b = self.bytes[self.i]
+                r += top_b << s
                 s += 8
                 self.i += 1
                 b -= 1
+            # Sign extend
+            if signed and top_b & 0x80:
+                    r -= 1 << s
             return r
         elif t==float:
             r = struct.unpack("f",struct.pack("BBBB",*self.bytes[self.i:self.i+4]))
@@ -229,8 +234,8 @@ class MeterSample(BGWrapper.Characteristic):
         self.byte_value = b.bytes
     def unpack(self):
         b = BytePack(self.byte_value)
-        self.reading_lsb[0] = b.get(3)
-        self.reading_lsb[1] = b.get(3)
+        self.reading_lsb[0] = b.get(3,signed=True)
+        self.reading_lsb[1] = b.get(3,signed=True)
         self.reading_ms[0]  = b.get(t=float)
         self.reading_ms[1]  = b.get(t=float)
 class MeterName(BGWrapper.Characteristic):
@@ -605,12 +610,16 @@ if __name__=="__main__":
         m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MEAN
         # Calculate the RMS as well
         m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MS
+        # Send the ADC settings
+        m.meter_settings.write()
+        # Set the meter state
         m.meter_settings.target_meter_state = m.meter_settings.METER_RUNNING
         def notifyCB():
             #This will be called every time a new sample is received
             print m.p.conn_handle
-            print m.lsbToNativeUnits(m.meter_sample.reading_lsb[0],0), m.getUnits(0)
-            print m.lsbToNativeUnits(m.meter_sample.reading_lsb[1],1), m.getUnits(1)
+            print "%.4f"%m.lsbToNativeUnits(m.meter_sample.reading_lsb[0],0), m.getUnits(0)
+            print "%.4f"%m.lsbToNativeUnits(m.meter_sample.reading_lsb[1],1), m.getUnits(1)
+        # Enable streaming
         m.meter_sample.enableNotify(True,notifyCB)
         m.meter_settings.write()
 
