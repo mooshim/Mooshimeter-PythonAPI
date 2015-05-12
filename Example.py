@@ -39,6 +39,8 @@ if __name__=="__main__":
         m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MEAN
         # Calculate the RMS as well
         m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MS
+        # Ensure we don't accidentally tell the Mooshimeter to reboot
+        m.meter_settings.target_meter_state = m.meter_settings.present_meter_state
         # Send the ADC settings
         m.meter_settings.write()
         # Set the meter state
