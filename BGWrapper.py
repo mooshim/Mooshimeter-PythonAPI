@@ -166,7 +166,9 @@ class Peripheral(object):
         new_char.handle = handles_by_uuid[new_char.uuid]
         self.chars[new_char.handle] = new_char
     def __eq__(self, other):
-        return self.sender == other.sender
+        if isinstance(other,self.__class__):
+            return self.sender == other.sender
+        return False
     def __str__(self):
         s = ""
         l = ["%02X:"%self.sender[i] for i in range(6)]
@@ -331,6 +333,8 @@ def read(conn, handle):
     return payload[0]
 
 def write(conn, handle, value):
+    if(handle==0):
+        print "Invalid handle!  Did you forget a call to Peripheral.replaceCharacteristic(c)?"
     ble.send_command(ser, ble.ble_cmd_attclient_attribute_write(conn,handle,value))
     ble.check_activity(ser)
     result = []
