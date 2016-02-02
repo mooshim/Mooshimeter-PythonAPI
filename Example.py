@@ -1,7 +1,15 @@
-import BGWrapper
-from Mooshimeter import Mooshimeter
+from Mooshimeter import *
+import threading
 
-from operator import attrgetter
+class InputThread(threading.Thread):
+    def __init__(self):
+        super(InputThread, self).__init__()
+        self.cb=None
+    def run(self):
+        while True:
+            s = raw_input()
+            if self.cb != None:
+                self.cb(s)
 
 """
 Example.py
@@ -18,6 +26,12 @@ if __name__=="__main__":
     # Set up the lower level to talk to a BLED112 in port COM4
     # REPLACE THIS WITH THE BLED112 PORT ON YOUR SYSTEM
     BGWrapper.initialize("COM4")
+    inputthread = InputThread()
+    inputthread.start()
+    cmd_queue = []
+    def addToQueue(s):
+        cmd_queue.append(s)
+    inputthread.cb = addToQueue
     # Scan for 3 seconds
     scan_results = BGWrapper.scan(3)
     # Filter for devices advertising the Mooshimeter service
@@ -28,35 +42,37 @@ if __name__=="__main__":
     # Display detected meters
     for m in meters:
         print m
-    def connectToMeterAndStream(p):
-        m = Mooshimeter(p)
-        m.connect()
-        # Apply some default settings
-        m.meter_settings.setBufferDepth(32) #samples
-        m.meter_settings.setSampleRate(125) #Hz
-        m.meter_settings.setHVRange(60) #volts
-        # Calculate the mean
-        m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MEAN
-        # Calculate the RMS as well
-        m.meter_settings.calc_settings |= m.meter_settings.METER_CALC_SETTINGS_MS
-        # Ensure we don't accidentally tell the Mooshimeter to reboot
-        m.meter_settings.target_meter_state = m.meter_settings.present_meter_state
-        # Send the ADC settings
-        m.meter_settings.write()
-        # Set the meter state
-        m.meter_settings.target_meter_state = m.meter_settings.METER_RUNNING
-        def notifyCB():
-            #This will be called every time a new sample is received
-            print "Connection: ", m.p.conn_handle
-            print "%.4f"%m.lsbToNativeUnits(m.meter_sample.reading_lsb[0],0), m.getUnits(0)
-            print "%.4f"%m.lsbToNativeUnits(m.meter_sample.reading_lsb[1],1), m.getUnits(1)
-        # Enable streaming
-        m.meter_sample.enableNotify(True,notifyCB)
-        m.meter_settings.write()
-
-    # Connect to the meter with the strongest signal
-    meters = sorted(meters, key=attrgetter('rssi'),reverse=True)
-    connectToMeterAndStream(meters[0])
+    main_meter = None
+    for m in meters:
+        if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
+            main_meter = Mooshimeter(m)
+            main_meter.connect()
+            main_meter.loadTree()
+    if main_meter == None:
+        print "Didn't find our friend..."
+        exit()
+    # Wait for us to load the command tree
+    while main_meter.tree.getNodeAtLongname('SAMPLING:TRIGGER')==None:
+        BGWrapper.idle()
+    #main_meter.sendCommand('sampling:depth 3')
+    #main_meter.sendCommand('sampling:trigger 2')
+    #main_meter.sendCommand('ch2:mapping:voltage:range 1')
+    main_meter.sendCommand('ch2:m 3')
+    main_meter.sendCommand('sh 1')
+    main_meter.sendCommand('sh:r:r 4')
+    #main_meter.sendCommand('ch1:m:c:a 0')
+    #main_meter.sendCommand('ch2:m:v:a 0')
+    main_meter.sendCommand('s:d 0')
+    main_meter.sendCommand('s:t 2')
+    main_meter.sendCommand('l:i 6')
+    main_meter.sendCommand('l:o 1')
     while True:
         # This call checks the serial port and processes new data
         BGWrapper.idle()
+        if len(cmd_queue):
+            cmd = cmd_queue.pop(0)
+            # Carve out a special case for disconnect
+            if cmd=='XXX':
+                main_meter.disconnect()
+            else:
+                main_meter.sendCommand(cmd)
