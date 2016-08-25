@@ -1,20 +1,19 @@
-import msgpack
 import zlib
+import CArrayWriter
 
 class NTYPE:
     PLAIN   =0  # May be an informational node, or a choice in a chooser
-    CHOOSER =1  # The children of a CHOOSER can only be selected by one CHOOSER, and a CHOOSER can only select one child
-    LINK    =2  # A link to somewhere else in the tree
-    COPY    =3  # In a fully inflated tree, this value will not appear.  It's an instruction to the inflater to copy the value
-    VAL_U8  =4  # These nodes have readable and writable values of the type specified
-    VAL_U16 =5  # These nodes have readable and writable values of the type specified
-    VAL_U32 =6  # These nodes have readable and writable values of the type specified
-    VAL_S8  =7  # These nodes have readable and writable values of the type specified
-    VAL_S16 =8  # These nodes have readable and writable values of the type specified
-    VAL_S32 =9  # These nodes have readable and writable values of the type specified
-    VAL_STR =10 # These nodes have readable and writable values of the type specified
-    VAL_BIN =11 # These nodes have readable and writable values of the type specified
-    VAL_FLT =12 # These nodes have readable and writable values of the type specified
+    LINK    =1  # A link to somewhere else in the tree
+    CHOOSER =2  # The children of a CHOOSER can only be selected by one CHOOSER, and a CHOOSER can only select one child
+    VAL_U8  =3  # These nodes have readable and writable values of the type specified
+    VAL_U16 =4  # These nodes have readable and writable values of the type specified
+    VAL_U32 =5  # These nodes have readable and writable values of the type specified
+    VAL_S8  =6  # These nodes have readable and writable values of the type specified
+    VAL_S16 =7  # These nodes have readable and writable values of the type specified
+    VAL_S32 =8  # These nodes have readable and writable values of the type specified
+    VAL_STR =9  # These nodes have readable and writable values of the type specified
+    VAL_BIN =10 # These nodes have readable and writable values of the type specified
+    VAL_FLT =11 # These nodes have readable and writable values of the type specified
 
     c_type_dict = {CHOOSER:'uint8',
                    VAL_U8 :'uint8',
@@ -36,45 +35,31 @@ class NTYPE:
 NTYPE().initCodeList()
 
 class ConfigNode(object):
-    def __init__(self,ntype=-1,name='',children=None):
+    def __init__(self,ntype=-1,name='',value=None,children=None):
         self.code = -1
         self.ntype = ntype
         self.name=name
         self.children=[]
         self.parent = None
         self.tree = None
-        self.notification_handler = self.defaultNotificationHandler
+        self.value = value
+        def default_handler(payload):
+            print str(self) + ' default handler caught: ' + str(payload)
+        self.notification_handler = default_handler
         if children!=None:
             for c in children:
                 if issubclass(c.__class__,ConfigNode):
                     self.children.append(c)
                 else:
-                    self.children.append(nodeFactory(NTYPE.PLAIN,str(c)))
-    def defaultNotificationHandler(self,new_val):
-        if self.ntype == NTYPE.CHOOSER:
-            try:
-                s = str(self.children[new_val])
-            except:
-                print "Meter sent a choice that's out of range!"
-                s = str(new_val)
-        else:
-            s = str(new_val)
-        print self.getLongName()+':'+s
-    def pack(self):
-        l = []
-        return msgpack.packb(self.packToEndOfList(l))
-    def unpack(self,arg):
-        l = msgpack.unpackb(arg)
-        self.unpackFromFrontOfList(l)
-    def unpackFromFrontOfList(self,l):
-        raise Exception()
-    def packToEndOfList(self,l):
-        raise Exception()
+                    self.children.append(ConfigNode(NTYPE.PLAIN,str(c)))
     def __str__(self):
         s = ''
         if self.code != -1:
             s += str(self.code) + ':'
+        s+=NTYPE.code_list[self.ntype]+":"
         s += self.name
+        if self.value != None:
+            s+=":"+str(self.value)
         return s
     def getIndex(self):
         return self.parent.children.index(self)
@@ -85,7 +70,7 @@ class ConfigNode(object):
             self.parent.getPath(rval)
             rval.append(self.getIndex())
         return tuple(rval)
-    def getLongName(self,rval=None,sep=':'):
+    def getLongName(self,rval=None,sep='_'):
         if rval==None:
             rval = self.name
         else:
@@ -95,87 +80,9 @@ class ConfigNode(object):
         else:
             return self.parent.getLongName(rval)
     def needsShortCode(self):
-        return False
+        return not (self.ntype in (NTYPE.PLAIN,NTYPE.LINK))
     def assignShortCode(self,code):
         self.code=code
-
-class StructuralNode(ConfigNode):
-    def unpackFromFrontOfList(self,l):
-        if l[0] != self.ntype:
-            print 'Wrong node type!'
-            raise Exception()
-        l.pop(0)
-        self.name=l.pop(0)
-        self.children = []
-        children_packed=l.pop(0)
-        while len(children_packed):
-            ntype = children_packed[0]
-            NClass = NodesByType[ntype]
-            n_instance = NClass(ntype)
-            n_instance.unpackFromFrontOfList(children_packed)
-            self.children.append(n_instance)
-    def packToEndOfList(self,l):
-        l.append(self.ntype)
-        l.append(self.name)
-        children_packed = []
-        for c in self.children:
-            c.packToEndOfList(children_packed)
-        l.append(children_packed)
-    def needsShortCode(self):
-        return self.ntype==NTYPE.CHOOSER
-
-class RefNode(ConfigNode):
-    def __init__(self,ntype=-1,name='',path=None):
-        super(RefNode, self).__init__(ntype,name,None)
-        self.path = path
-    def unpackFromFrontOfList(self,l):
-        if l[0] != self.ntype:
-            print 'Wrong node type!'
-            raise Exception()
-        l.pop(0)
-        self.path = l.pop(0)
-    def packToEndOfList(self,l):
-        l.append(self.ntype)
-        l.append(self.path)
-    def __str__(self):
-        s = ''
-        if self.ntype == NTYPE.COPY:
-            s += 'COPY: '+ str(self.path)
-        if self.ntype == NTYPE.LINK:
-            s += 'LINK:'+ str(self.path) + ':' + str(self.tree.getNodeAtLongname(self.path).getPath())
-        return s
-
-class ValueNode(ConfigNode):
-    def unpackFromFrontOfList(self,l):
-        if l[0] != self.ntype:
-            print 'Wrong node type!'
-            raise Exception()
-        l.pop(0)
-        self.name = l.pop(0)
-    def packToEndOfList(self,l):
-        l.append(self.ntype)
-        l.append(self.name)
-    def needsShortCode(self):
-        return True
-
-NodesByType = [
-    StructuralNode,
-    StructuralNode,
-    RefNode,
-    RefNode,
-    ValueNode,
-    ValueNode,
-    ValueNode,
-    ValueNode,
-    ValueNode,
-    ValueNode,
-    ValueNode,
-    ValueNode,
-    ValueNode,
-]
-
-def nodeFactory(*args,**kwargs):
-    return (NodesByType[args[0]](*args,**kwargs))
 
 class ConfigTree(object):
     def __init__(self, root=None):
@@ -186,17 +93,36 @@ class ConfigTree(object):
         print indent*'  ' + str(n)
         for c in n.children:
             self.enumerate(c,indent+1)
+    def serialize(self):
+        # Decided not to use msgpack for simplicity.  We have such a reductive structure we can do it
+        # more easily ourselves
+        r = bytearray()
+        def on_each(node):
+            r.append(node.ntype)
+            r.append(len(node.name))
+            [r.append(ord(c)) for c in node.name]
+            r.append(len(node.children))
+        self.walk(on_each)
+        return r.decode('ascii')
+    def deserialize(self, bytes):
+        ntype = bytes[0]
+        nlen  = bytes[1]
+        name  = bytes[2:2+nlen].decode('ascii')
+        n_children = bytes[2+nlen]
+        del bytes[:3+nlen]
+        return ConfigNode(ntype,name,children=[self.deserialize(bytes) for x in range(n_children)])
     def pack(self):
-        l = []
-        self.root.packToEndOfList(l)
-        plain = msgpack.packb(l)
+        #self.root.packToEndOfList(l)
+        #plain = msgpack.packb(l)
+        plain = self.serialize()
+        print "PLAIN BYTES:",len(plain)
         compressed = zlib.compress(plain)
+        print "COMPRESSED BYTES:",len(compressed)
         return compressed
     def unpack(self,compressed):
         plain = zlib.decompress(compressed)
-        l = msgpack.unpackb(plain)
-        self.root = nodeFactory(l[0])
-        self.root.unpackFromFrontOfList(l)
+        bytes = bytearray(plain)
+        self.root = self.deserialize(bytes)
         self.assignShortCodes()
     def assignShortCodes(self):
         # TODO: Rename this function... it's become a general reference refresher for the tree
@@ -210,15 +136,13 @@ class ConfigTree(object):
                 g_code[0] += 1
         self.walk(on_each)
     def getNodeAtLongname(self,longname):
+        longname = longname.upper()
         tokens = longname.split(':')
         n = self.root
-        if longname == '':
-            return n
         for token in tokens:
             found=False
             for c in n.children:
-                #if c.name == token:
-                if c.name.startswith(token):
+                if c.name == token:
                     n = c
                     found=True
                     break

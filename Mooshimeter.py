@@ -3,6 +3,7 @@ import BGWrapper
 from UUID import *
 from ConfigNode import *
 from BytePack import *
+import binascii
 
 class MeterSerOut(BGWrapper.Characteristic):
     def __init__(self, meter, parent, handle, uuid):
@@ -31,8 +32,6 @@ class MeterSerOut(BGWrapper.Characteristic):
                 elif node.ntype == NTYPE.CHOOSER:
                     node.notification_handler(b.get(1))
                 elif node.ntype == NTYPE.LINK   :
-                    raise Exception()
-                elif node.ntype == NTYPE.COPY   :
                     raise Exception()
                 elif node.ntype == NTYPE.VAL_U8 :
                     node.notification_handler(b.get(1))
@@ -87,6 +86,23 @@ class MeterSerIn(BGWrapper.Characteristic):
         pass
     def unpack(self):
         pass
+
+def buildTree():
+    # Test of config tree build
+    # Abbreviations
+    NF = ConfigNode
+    NP = NTYPE.PLAIN
+    root = NF(NP,children=[
+        NF(NP,'ADMIN',children=[
+            NF(NTYPE.VAL_U32,'CRC32'),
+            NF(NTYPE.VAL_BIN,'TREE'),
+            NF(NTYPE.VAL_STR,'DIAGNOSTIC')
+        ]),
+    ])
+    tree = ConfigTree(root)
+    tree.assignShortCodes()
+    return tree
+
 class Mooshimeter(object):
     class mUUID:
         """
@@ -110,6 +126,7 @@ class Mooshimeter(object):
         b.put(payload)
         self.meter_serin.byte_value = b.bytes
         self.meter_serin.write()
+
     def __init__(self, peripheral):
         """
         Initialized instance variables
@@ -120,26 +137,19 @@ class Mooshimeter(object):
         self.meter_serin  = MeterSerIn( self,self.p,0,self.mUUID.METER_SERIN)
         self.meter_serout = MeterSerOut(self,self.p,0,self.mUUID.METER_SEROUT)
         # Initial tree
-        NF = nodeFactory
-        NP = NTYPE.PLAIN
-
-        root = NF(NP,children=[
-            NF(NP,'ADMIN',children=[
-                NF(NTYPE.VAL_U32,'CRC32'),
-                NF(NTYPE.VAL_BIN,'TREE'),
-                NF(NTYPE.VAL_STR,'DIAGNOSTIC')
-            ]),
-        ])
-        tree = ConfigTree(root)
-        tree.assignShortCodes()
+        tree = buildTree()
         self.code_list = tree.getShortCodeList()
         self.tree = tree
         # Assign an expander function to the tree node
         node = self.tree.getNodeAtLongname('ADMIN:TREE')
         def expandReceivedTree(payload):
-            self.tree.unpack(''.join([chr(c) for c in payload]))
+            payload_str = ''.join([chr(c) for c in payload])
+            self.tree.unpack(payload_str)
             self.code_list = tree.getShortCodeList()
             tree.enumerate()
+            # Calculate the CRC32 of received tree
+            crc_node = self.tree.getNodeAtLongname('ADMIN:CRC32')
+            crc_node.value = binascii.crc32(payload_str)
         node.notification_handler=expandReceivedTree
     def sendCommand(self,cmd):
         if type(cmd) != str:
@@ -150,7 +160,6 @@ class Mooshimeter(object):
         except ValueError:
             node_str = cmd
             payload_str = None
-        node_str = node_str.upper()
         node = self.tree.getNodeAtLongname(node_str)
         if node == None:
             print 'Node %s not found!'%node_str
@@ -170,9 +179,6 @@ class Mooshimeter(object):
             elif node.ntype == NTYPE.CHOOSER:
                 b.put(int(payload_str))
             elif node.ntype == NTYPE.LINK   :
-                print "This command doesn't accept a payload"
-                return
-            elif node.ntype == NTYPE.COPY   :
                 print "This command doesn't accept a payload"
                 return
             elif node.ntype == NTYPE.VAL_U8 :

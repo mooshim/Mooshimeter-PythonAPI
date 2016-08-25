@@ -44,7 +44,10 @@ if __name__=="__main__":
         print m
     main_meter = None
     for m in meters:
-        if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
+        #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
+        #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
+        #if(m.sender == (0x6D,0x9D,0xA0,0x39,0xCD,0x20)):
+        if(m.sender == (0xA4,0xD3,0xCB,0x19,0x9E,0x68)):
             main_meter = Mooshimeter(m)
             main_meter.connect()
             main_meter.loadTree()
@@ -54,18 +57,16 @@ if __name__=="__main__":
     # Wait for us to load the command tree
     while main_meter.tree.getNodeAtLongname('SAMPLING:TRIGGER')==None:
         BGWrapper.idle()
-    #main_meter.sendCommand('sampling:depth 3')
-    #main_meter.sendCommand('sampling:trigger 2')
-    #main_meter.sendCommand('ch2:mapping:voltage:range 1')
-    main_meter.sendCommand('ch2:m 3')
-    main_meter.sendCommand('sh 1')
-    main_meter.sendCommand('sh:r:r 4')
-    #main_meter.sendCommand('ch1:m:c:a 0')
-    #main_meter.sendCommand('ch2:m:v:a 0')
-    main_meter.sendCommand('s:d 0')
-    main_meter.sendCommand('s:t 2')
-    main_meter.sendCommand('l:i 6')
-    main_meter.sendCommand('l:o 1')
+    # Unlock the meter by writing the correct CRC32 value
+    # The CRC32 node's value is written when the tree is received
+    main_meter.sendCommand('admin:crc32 '+str(main_meter.tree.getNodeAtLongname('admin:crc32').value))
+    main_meter.sendCommand('sampling:rate 0')       # Rate 125Hz
+    main_meter.sendCommand('sampling:depth 3')      # Depth 256
+    main_meter.sendCommand('sampling:trigger 2')    # Trigger continuous
+    main_meter.sendCommand('ch1:mapping 0')         # CH1 select current input
+    main_meter.sendCommand('ch1:range_i 0')         # CH1 10A range
+    main_meter.sendCommand('ch2:mapping 0')         # CH2 select voltage input
+    main_meter.sendCommand('ch2:range_i 1')         # CH2 Voltage 600V range
     while True:
         # This call checks the serial port and processes new data
         BGWrapper.idle()
