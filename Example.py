@@ -1,5 +1,6 @@
 from Mooshimeter import *
 import threading
+import time
 
 class InputThread(threading.Thread):
     def __init__(self):
@@ -67,9 +68,15 @@ if __name__=="__main__":
     main_meter.sendCommand('ch1:range_i 0')         # CH1 10A range
     main_meter.sendCommand('ch2:mapping 0')         # CH2 select voltage input
     main_meter.sendCommand('ch2:range_i 1')         # CH2 Voltage 600V range
+
+    last_heartbeat_time = time.time()
+
     while True:
         # This call checks the serial port and processes new data
         BGWrapper.idle()
+        if time.time()-last_heartbeat_time > 10:
+            last_heartbeat_time = time.time()
+            main_meter.sendCommand('pcb_version')
         if len(cmd_queue):
             cmd = cmd_queue.pop(0)
             # Carve out a special case for disconnect
