@@ -220,3 +220,14 @@ class Mooshimeter(object):
         self.meter_serout.enableNotify(True,tmp_cb)
     def disconnect(self):
         BGWrapper.disconnect()
+
+    def attachCallback(self,node_path,notify_cb):
+        if notify_cb == None:
+            def doNothing(val):
+                return
+            notify_cb = doNothing
+        node = self.tree.getNodeAtLongname(node_path)
+        if node == None:
+            print 'Could not find node at ' + node_path
+            return
+        node.notification_handler = notify_cb

@@ -45,10 +45,12 @@ if __name__=="__main__":
         print m
     main_meter = None
     for m in meters:
+        # This block is filtering for UUID.  I know the UUID I want to connect to and will connect only to it.
         #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
         #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
         #if(m.sender == (0x6D,0x9D,0xA0,0x39,0xCD,0x20)):
-        if(m.sender == (0xA4,0xD3,0xCB,0x19,0x9E,0x68)):
+        #if(m.sender == (0xA4,0xD3,0xCB,0x19,0x9E,0x68)):
+        if(m.sender == (0xCE,0xE6,0xCB,0x19,0x9E,0x68)):
             main_meter = Mooshimeter(m)
             main_meter.connect()
             main_meter.loadTree()
@@ -68,6 +70,14 @@ if __name__=="__main__":
     main_meter.sendCommand('ch1:range_i 0')         # CH1 10A range
     main_meter.sendCommand('ch2:mapping 0')         # CH2 select voltage input
     main_meter.sendCommand('ch2:range_i 1')         # CH2 Voltage 600V range
+
+    #main_meter.tree.getNodeAtLongname('')
+    def printCH1Value(val):
+        print "Received CH1: %f"%val
+    def printCH2Value(val):
+        print "Received CH2: %f"%val
+    main_meter.attachCallback('ch1:value',printCH1Value)
+    main_meter.attachCallback('ch2:value',printCH2Value)
 
     last_heartbeat_time = time.time()
 
