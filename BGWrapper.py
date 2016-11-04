@@ -139,6 +139,9 @@ class Peripheral(object):
         return self.writeByHandle(self.findHandleForUUID(uuid),payload)
     def enableNotify(self,uuid,enable):
         # We need to find the characteristic configuration for the provided UUID
+        # The characteristic configuration is a characteristic in its own right with UUID 0x2902
+        # It will be located a few handles above the characteristic it controls in the table
+        # To find it, we will simply iterate up the table a few slots looking for a characteristic with UUID 0x2902
         notify_uuid = UUID(0x2902)
         base_handle = self.findHandleForUUID(uuid)
         test_handle = base_handle + 1
@@ -146,7 +149,7 @@ class Peripheral(object):
             if test_handle-base_handle > 3:
                 # FIXME: I'm not sure what the error criteria should be, but if we are trying to enable
                 # notifications for a characteristic that won't accept it we need to throw an error
-                raise
+                raise Exception("Trying to enable notification for a characteristic that doesn't allow it!")
             if self.chars[test_handle].uuid == notify_uuid:
                 break
             test_handle += 1
