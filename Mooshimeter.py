@@ -1,17 +1,15 @@
 # coding=UTF-8
-import BGWrapper
 from UUID import *
 from ConfigNode import *
 from BytePack import *
 import binascii
 
-class MeterSerOut(BGWrapper.Characteristic):
-    def __init__(self, meter, parent, handle, uuid):
+class MeterSerOut():
+    def __init__(self, meter):
         """
         :param other: a BGWrapper.Characteristic
         :return:
         """
-        super(MeterSerOut,self).__init__(parent, handle, uuid)
         self.meter = meter
         self.seq_n = 0
         self.aggregate = []
@@ -26,6 +24,7 @@ class MeterSerOut(BGWrapper.Characteristic):
                     node = self.meter.code_list[shortcode]
                 except KeyError:
                     print 'Received an unrecognized shortcode!'
+                    self.aggregate = self.aggregate[1:]
                     return
                 if   node.ntype == NTYPE.PLAIN    :
                     raise Exception()
@@ -63,29 +62,10 @@ class MeterSerOut(BGWrapper.Characteristic):
             except UnderflowException:
                 print 'underflow'
                 return
-    def unpack(self):
-        b = BytePack(self.byte_value)
-        seq_n      = b.get(1) & 0xFF
-        if seq_n != (self.seq_n+1)%0x100:
-            print 'Received out of order packet!'
-            print 'Expected: %d'%(self.seq_n+1)
-            print 'Got     : %d'%seq_n
-        self.seq_n = seq_n
-        self.aggregate += b.bytes[1:]
+    def unpack(self, payload):
+        self.aggregate += payload[:]
         # Attempt to decode a message, if we succeed pop the message off the byte queue
         self.interpretAggregate()
-class MeterSerIn(BGWrapper.Characteristic):
-    def __init__(self, meter, parent, handle, uuid):
-        """
-        :param other: a BGWrapper.Characteristic
-        :return:
-        """
-        super(MeterSerIn,self).__init__(parent, handle, uuid)
-        self.meter = meter
-    def pack(self):
-        pass
-    def unpack(self):
-        pass
 
 def buildTree():
     # Test of config tree build
@@ -104,38 +84,23 @@ def buildTree():
     return tree
 
 class Mooshimeter(object):
-    class mUUID:
-        """
-        Static declarations of UUID values in the meter
-        """
-        METER_SERVICE      = UUID("1BC5FFA0-0200-62AB-E411-F254E005DBD4")
-        METER_SERIN        = UUID("1BC5FFA1-0200-62AB-E411-F254E005DBD4")
-        METER_SEROUT       = UUID("1BC5FFA2-0200-62AB-E411-F254E005DBD4")
-
-        OAD_SERVICE_UUID   = UUID("1BC5FFC0-0200-62AB-E411-F254E005DBD4")
-        OAD_IMAGE_IDENTIFY = UUID("1BC5FFC1-0200-62AB-E411-F254E005DBD4")
-        OAD_IMAGE_BLOCK    = UUID("1BC5FFC2-0200-62AB-E411-F254E005DBD4")
-        OAD_REBOOT         = UUID("1BC5FFC3-0200-62AB-E411-F254E005DBD4")
-
     def sendToMeter(self, payload):
-        if len(payload) > 19:
-            raise Exception("Not implemented!  Payload too long!")
-        # Put in the sequence number
         b = BytePack()
-        b.put(0) # seq n
+        b.put(0x66) #magic byte
+        b.put(len(payload)) #length to follow
         b.put(payload)
-        self.meter_serin.byte_value = b.bytes
-        self.meter_serin.write()
-
-    def __init__(self, peripheral):
+        self.serial_port.write(str(bytearray(b.bytes)))
+        print b.bytes
+    def receiveFromMeter(self,payload):
+        self.meter_serout.unpack(payload)
+    def __init__(self,ser):
         """
         Initialized instance variables
-        :param peripheral: a BGWrapper.Peripheral instance
+        :param ser: a Serial.serial instance
         :return:
         """
-        self.p = peripheral
-        self.meter_serin  = MeterSerIn( self,self.p,0,self.mUUID.METER_SERIN)
-        self.meter_serout = MeterSerOut(self,self.p,0,self.mUUID.METER_SEROUT)
+        self.serial_port = ser
+        self.meter_serout = MeterSerOut(self)
         # Initial tree
         tree = buildTree()
         self.code_list = tree.getShortCodeList()
@@ -206,21 +171,6 @@ class Mooshimeter(object):
         self.sendToMeter(b.bytes)
     def loadTree(self):
         self.sendCommand('ADMIN:TREE')
-    def connect(self):
-        self.p.connect()
-        self.p.discover()
-        def assignHandle(c):
-            self.p.replaceCharacteristic(c)
-        assignHandle(self.meter_serout)
-        assignHandle(self.meter_serin)
-        wrap=[0]
-        def tmp_cb():
-            print "Packet %d"%wrap[0]
-            wrap[0]+=1
-        self.meter_serout.enableNotify(True,tmp_cb)
-    def disconnect(self):
-        BGWrapper.disconnect()
-
     def attachCallback(self,node_path,notify_cb):
         if notify_cb == None:
             def doNothing(val):

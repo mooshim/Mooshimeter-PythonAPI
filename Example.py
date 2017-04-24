@@ -1,6 +1,7 @@
 from Mooshimeter import *
 import threading
 import time
+import serial
 
 class InputThread(threading.Thread):
     def __init__(self):
@@ -24,73 +25,101 @@ The script does the following:
 """
 
 if __name__=="__main__":
-    # Set up the lower level to talk to a BLED112 in port COM4
-    # REPLACE THIS WITH THE BLED112 PORT ON YOUR SYSTEM
-    BGWrapper.initialize("COM4")
+    # Set up the lower level to talk to a buspirate
+    port = "COM10"
+    try:
+        ser = serial.Serial(port=port, baudrate=115200, timeout=0)
+        # flush buffers
+        ser.flushInput()
+        ser.flushOutput()
+    except serial.SerialException as e:
+        print "\n================================================================"
+        print "Port error (name='%s', baud='%ld'): %s" % (port, 115200, e)
+        print "================================================================"
+        exit(2)
+
+    # We're talking to a bus pirate.  Set it up to read hacked Mooshimeter UART through SD
+    def sendAndWait(payload):
+        ser.write(payload+'\n')
+        time.sleep(0.05)
+    sendAndWait('#') #Reset
+    sendAndWait('m') #mode
+    sendAndWait('3') #uart
+    sendAndWait('9') #115200
+    sendAndWait('1') #8 bit, no parity
+    sendAndWait('1') #1 stop bit
+    sendAndWait('1') #Receive polarity idle high
+    sendAndWait('2') #Transmit idle asserted (no hiz)
+    sendAndWait('(1)') #start bridge macro
+    sendAndWait('y') #Yes we're sure we want to start the bridge macro
+
+
     inputthread = InputThread()
     inputthread.start()
     cmd_queue = []
     def addToQueue(s):
         cmd_queue.append(s)
     inputthread.cb = addToQueue
-    # Scan for 3 seconds
-    scan_results = BGWrapper.scan(3)
-    # Filter for devices advertising the Mooshimeter service
-    meters = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
-    if len(meters) == 0:
-        print "No Mooshimeters found"
-        exit(0)
-    # Display detected meters
-    for m in meters:
-        print m
-    main_meter = None
-    for m in meters:
-        # This block is filtering for UUID.  I know the UUID I want to connect to and will connect only to it.
-        #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
-        #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
-        #if(m.sender == (0x6D,0x9D,0xA0,0x39,0xCD,0x20)):
-        #if(m.sender == (0xA4,0xD3,0xCB,0x19,0x9E,0x68)):
-        if(m.sender == (0xCE,0xE6,0xCB,0x19,0x9E,0x68)):
-            main_meter = Mooshimeter(m)
-            main_meter.connect()
-            main_meter.loadTree()
-    if main_meter == None:
-        print "Didn't find our friend..."
-        exit()
+    main_meter = Mooshimeter(ser)
+
+    class MeterInputThread(threading.Thread):
+        def __init__(self):
+            super(MeterInputThread, self).__init__()
+        def run(self):
+            while 1:
+                bytes = ser.inWaiting()
+                if bytes:
+                    s = ser.read(bytes)
+                    main_meter.receiveFromMeter(map(ord,s))
+    meter_thread = MeterInputThread()
+    meter_thread.start()
+
+    #main_meter.loadTree()
     # Wait for us to load the command tree
     while main_meter.tree.getNodeAtLongname('SAMPLING:TRIGGER')==None:
-        BGWrapper.idle()
+        time.sleep(1)
+        main_meter.loadTree()
     # Unlock the meter by writing the correct CRC32 value
     # The CRC32 node's value is written when the tree is received
     main_meter.sendCommand('admin:crc32 '+str(main_meter.tree.getNodeAtLongname('admin:crc32').value))
     main_meter.sendCommand('sampling:rate 0')       # Rate 125Hz
     main_meter.sendCommand('sampling:depth 3')      # Depth 256
-    main_meter.sendCommand('sampling:trigger 2')    # Trigger continuous
     main_meter.sendCommand('ch1:mapping 0')         # CH1 select current input
     main_meter.sendCommand('ch1:range_i 0')         # CH1 10A range
     main_meter.sendCommand('ch2:mapping 0')         # CH2 select voltage input
     main_meter.sendCommand('ch2:range_i 1')         # CH2 Voltage 600V range
+    #main_meter.sendCommand('log:on 2')         # CH2 Voltage 600V range
+
+    main_meter.sendCommand('sampling:trigger 3')    # Trigger trickle
 
     #main_meter.tree.getNodeAtLongname('')
+
+    last_heartbeat_time = time.time()
+    samples_in_row = 0
+
     def printCH1Value(val):
-        print "Received CH1: %f"%val
+        pass
+        #print "Received CH1: %f"%val
     def printCH2Value(val):
+        global last_heartbeat_time
+        global samples_in_row
+        new_time = time.time()
+        dtms = (new_time-last_heartbeat_time)*1000
+        if dtms < 100:
+            samples_in_row+=1
+        else:
+            samples_in_row = 0;
+        print "dt: %0.1fms : N : %d"%(dtms,samples_in_row)
+        last_heartbeat_time = new_time
         print "Received CH2: %f"%val
     main_meter.attachCallback('ch1:value',printCH1Value)
     main_meter.attachCallback('ch2:value',printCH2Value)
 
-    last_heartbeat_time = time.time()
-
     while True:
-        # This call checks the serial port and processes new data
-        BGWrapper.idle()
-        if time.time()-last_heartbeat_time > 10:
-            last_heartbeat_time = time.time()
-            main_meter.sendCommand('pcb_version')
         if len(cmd_queue):
             cmd = cmd_queue.pop(0)
             # Carve out a special case for disconnect
             if cmd=='XXX':
-                main_meter.disconnect()
+                pass
             else:
                 main_meter.sendCommand(cmd)

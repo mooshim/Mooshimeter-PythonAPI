@@ -44,7 +44,7 @@ class ConfigNode(object):
         self.tree = None
         self.value = value
         def default_handler(payload):
-            print str(self) + ' default handler caught: ' + str(payload)
+            print self.getLongName() + ' default handler caught: ' + str(payload)
         self.notification_handler = default_handler
         if children!=None:
             for c in children:
