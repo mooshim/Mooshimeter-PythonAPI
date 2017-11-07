@@ -9,7 +9,6 @@ from UUID import *
 ser = 0
 ble = bglib.BGLib()
 ble.packet_mode = False
-ble.debug = False
 
 #global definitions
 uuid_service = [0x28, 0x00]  # 0x2800
@@ -338,7 +337,6 @@ def read(conn, handle):
 def write(conn, handle, value):
     if(handle==0):
         print "Invalid handle!  Did you forget a call to Peripheral.replaceCharacteristic(c)?"
-    ble.send_command(ser, ble.ble_cmd_attclient_attribute_write(conn,handle,value))
     ble.check_activity(ser)
     result = []
     def ackHandler(bglib_instance, args):
@@ -346,6 +344,7 @@ def write(conn, handle, value):
             result.append(None)
     ble.ble_rsp_attclient_attribute_write += ackHandler
     ble.ble_evt_attclient_procedure_completed += ackHandler
+    ble.send_command(ser, ble.ble_cmd_attclient_attribute_write(conn,handle,value))
     while len(result)<2:
         idle()
     ble.ble_rsp_attclient_attribute_write -= ackHandler

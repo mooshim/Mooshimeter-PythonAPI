@@ -50,7 +50,8 @@ if __name__=="__main__":
         #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
         #if(m.sender == (0x6D,0x9D,0xA0,0x39,0xCD,0x20)):
         #if(m.sender == (0xA4,0xD3,0xCB,0x19,0x9E,0x68)):
-        if(m.sender == (0xCE,0xE6,0xCB,0x19,0x9E,0x68)):
+        #if(m.sender == (0xCE,0xE6,0xCB,0x19,0x9E,0x68)):
+        if(m.sender == (0x13,0x0F,0x8A,0xEA,0x4A,0x88)):
             main_meter = Mooshimeter(m)
             main_meter.connect()
             main_meter.loadTree()
@@ -91,6 +92,7 @@ if __name__=="__main__":
             cmd = cmd_queue.pop(0)
             # Carve out a special case for disconnect
             if cmd=='XXX':
+                print "Disconnecting..."
                 main_meter.disconnect()
             else:
                 main_meter.sendCommand(cmd)
