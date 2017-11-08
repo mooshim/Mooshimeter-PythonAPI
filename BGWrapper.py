@@ -171,10 +171,13 @@ class Peripheral(object):
         if isinstance(other,self.__class__):
             return self.sender == other.sender
         return False
-    def __str__(self):
+    def getUUIDString(self):
         s = ""
         l = ["%02X:"%self.sender[i] for i in range(6)]
         s+= "".join(l)
+        return s
+    def __str__(self):
+        s = self.getUUIDString()
         s+= "\t%d"%self.rssi
         for service in self.ad_services:
             s+="\t"
@@ -193,7 +196,6 @@ def initialize(port="COM4"):
             # flush buffers
             ser.flushInput()
             ser.flushOutput()
-            disconnect()
             stopScan()
         except serial.SerialException as e:
             print "\n================================================================"
@@ -249,6 +251,7 @@ def connect(scan_result):
         if (args['flags'] & 0x05) == 0x05:
             print "Connected to %s" % ':'.join(['%02X' % b for b in args['address'][::-1]])
             print "Interval: %dms"%(args['conn_interval']/1.25)
+            print "Connection ID: %d"%(args['connection'])
             result.append(args['connection'])
     ble.ble_evt_connection_status += cb
     while len(result) == 0:
@@ -296,8 +299,8 @@ def discoverCharacteristics(conn, handle_start, handle_end):
         ble.ble_evt_attclient_procedure_completed -= finished_cb
         return chars
 
-def disconnect():
-    ble.send_command(ser, ble.ble_cmd_connection_disconnect(0))
+def disconnect(handle):
+    ble.send_command(ser, ble.ble_cmd_connection_disconnect(handle))
     ble.check_activity(ser)
 
 def read(conn, handle):

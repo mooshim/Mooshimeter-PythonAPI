@@ -34,51 +34,49 @@ if __name__=="__main__":
         cmd_queue.append(s)
     inputthread.cb = addToQueue
     # Scan for 3 seconds
-    scan_results = BGWrapper.scan(3)
+    scan_results = BGWrapper.scan(5)
     # Filter for devices advertising the Mooshimeter service
-    meters = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
-    if len(meters) == 0:
+    results_wrapped = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
+    if len(results_wrapped) == 0:
         print "No Mooshimeters found"
         exit(0)
-    # Display detected meters
-    for m in meters:
-        print m
-    main_meter = None
-    for m in meters:
-        # This block is filtering for UUID.  I know the UUID I want to connect to and will connect only to it.
-        #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
-        #if(m.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
-        #if(m.sender == (0x6D,0x9D,0xA0,0x39,0xCD,0x20)):
-        #if(m.sender == (0xA4,0xD3,0xCB,0x19,0x9E,0x68)):
-        #if(m.sender == (0xCE,0xE6,0xCB,0x19,0x9E,0x68)):
-        if(m.sender == (0x13,0x0F,0x8A,0xEA,0x4A,0x88)):
-            main_meter = Mooshimeter(m)
-            main_meter.connect()
-            main_meter.loadTree()
-    if main_meter == None:
-        print "Didn't find our friend..."
-        exit()
-    # Wait for us to load the command tree
-    while main_meter.tree.getNodeAtLongname('SAMPLING:TRIGGER')==None:
-        BGWrapper.idle()
-    # Unlock the meter by writing the correct CRC32 value
-    # The CRC32 node's value is written when the tree is received
-    main_meter.sendCommand('admin:crc32 '+str(main_meter.tree.getNodeAtLongname('admin:crc32').value))
-    main_meter.sendCommand('sampling:rate 0')       # Rate 125Hz
-    main_meter.sendCommand('sampling:depth 3')      # Depth 256
-    main_meter.sendCommand('sampling:trigger 2')    # Trigger continuous
-    main_meter.sendCommand('ch1:mapping 0')         # CH1 select current input
-    main_meter.sendCommand('ch1:range_i 0')         # CH1 10A range
-    main_meter.sendCommand('ch2:mapping 0')         # CH2 select voltage input
-    main_meter.sendCommand('ch2:range_i 1')         # CH2 Voltage 600V range
+    meters = []
+    for r in results_wrapped:
+        # Use a statement like the below to filter for UUID
+        #if(r.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
+        m = Mooshimeter(r)
+        m.connect()
+        m.loadTree()
+        # Wait for us to load the command tree
+        while m.tree.getNodeAtLongname('SAMPLING:TRIGGER')==None:
+            BGWrapper.idle()
+        # Unlock the meter by writing the correct CRC32 value
+        # The CRC32 node's value is written when the tree is received
+        m.sendCommand('admin:crc32 '+str(m.tree.getNodeAtLongname('admin:crc32').value))
+        meters.append(m)
 
-    #main_meter.tree.getNodeAtLongname('')
-    def printCH1Value(val):
-        print "Received CH1: %f"%val
-    def printCH2Value(val):
-        print "Received CH2: %f"%val
-    main_meter.attachCallback('ch1:value',printCH1Value)
-    main_meter.attachCallback('ch2:value',printCH2Value)
+    # All the meters are unlocked.  Prepare the logfile.
+    logfile = file('log.txt', 'w+')
+    logfile.write("Log started at: %f\n"%(time.time()))
+
+    for m in meters:
+        m.sendCommand('sampling:rate 0')       # Rate 125Hz
+        m.sendCommand('sampling:depth 3')      # Depth 256
+        m.sendCommand('ch1:mapping 0')         # CH1 select current input
+        m.sendCommand('ch1:range_i 0')         # CH1 10A range
+        m.sendCommand('ch2:mapping 0')         # CH2 select voltage input
+        m.sendCommand('ch2:range_i 1')         # CH2 Voltage 600V range
+        m.sendCommand('sampling:trigger 2')    # Trigger continuous
+        def printCH1Value(meter,val):
+            s = meter.p.getUUIDString()
+            logfile.write("%s 1: %f\n"%(s,val))
+            print "%s CH1: %f"%(s,val)
+        def printCH2Value(meter,val):
+            s = meter.p.getUUIDString()
+            logfile.write("%s 2: %f\n"%(s,val))
+            print "%s CH2: %f"%(s,val)
+        m.attachCallback('ch1:value',printCH1Value)
+        m.attachCallback('ch2:value',printCH2Value)
 
     last_heartbeat_time = time.time()
 
@@ -87,12 +85,16 @@ if __name__=="__main__":
         BGWrapper.idle()
         if time.time()-last_heartbeat_time > 10:
             last_heartbeat_time = time.time()
-            main_meter.sendCommand('pcb_version')
+            for m in meters:
+                m.sendCommand('pcb_version')
+            logfile.flush()
         if len(cmd_queue):
             cmd = cmd_queue.pop(0)
             # Carve out a special case for disconnect
             if cmd=='XXX':
                 print "Disconnecting..."
-                main_meter.disconnect()
+                for m in meters:
+                    m.disconnect()
             else:
-                main_meter.sendCommand(cmd)
+                for m in meters:
+                    m.sendCommand(cmd)

@@ -30,33 +30,33 @@ class MeterSerOut(BGWrapper.Characteristic):
                 if   node.ntype == NTYPE.PLAIN    :
                     raise Exception()
                 elif node.ntype == NTYPE.CHOOSER:
-                    node.notification_handler(b.get(1))
+                    node.notification_handler(self.meter,b.get(1))
                 elif node.ntype == NTYPE.LINK   :
                     raise Exception()
                 elif node.ntype == NTYPE.VAL_U8 :
-                    node.notification_handler(b.get(1))
+                    node.notification_handler(self.meter,b.get(1))
                 elif node.ntype == NTYPE.VAL_U16:
-                    node.notification_handler(b.get(2))
+                    node.notification_handler(self.meter,b.get(2))
                 elif node.ntype == NTYPE.VAL_U32:
-                    node.notification_handler(b.get(4))
+                    node.notification_handler(self.meter,b.get(4))
                 elif node.ntype == NTYPE.VAL_S8 :
-                    node.notification_handler(b.get(1,signed=True))
+                    node.notification_handler(self.meter,b.get(1,signed=True))
                 elif node.ntype == NTYPE.VAL_S16:
-                    node.notification_handler(b.get(2,signed=True))
+                    node.notification_handler(self.meter,b.get(2,signed=True))
                 elif node.ntype == NTYPE.VAL_S32:
-                    node.notification_handler(b.get(4,signed=True))
+                    node.notification_handler(self.meter,b.get(4,signed=True))
                 elif node.ntype == NTYPE.VAL_STR:
                     expecting_bytes=b.get(2)
                     if b.getBytesRemaining() < expecting_bytes:
                         return #abort!
-                    node.notification_handler(b.getBytes(expecting_bytes))
+                    node.notification_handler(self.meter,b.getBytes(expecting_bytes))
                 elif node.ntype == NTYPE.VAL_BIN:
                     expecting_bytes=b.get(2)
                     if b.getBytesRemaining() < expecting_bytes:
                         return #abort!
-                    node.notification_handler(b.getBytes(expecting_bytes))
+                    node.notification_handler(self.meter,b.getBytes(expecting_bytes))
                 elif node.ntype == NTYPE.VAL_FLT:
-                    node.notification_handler(b.get(4,t=float))
+                    node.notification_handler(self.meter,b.get(4,t=float))
                 else:
                     raise Exception()
                 self.aggregate = self.aggregate[b.i:]
@@ -142,7 +142,7 @@ class Mooshimeter(object):
         self.tree = tree
         # Assign an expander function to the tree node
         node = self.tree.getNodeAtLongname('ADMIN:TREE')
-        def expandReceivedTree(payload):
+        def expandReceivedTree(meter,payload):
             payload_str = ''.join([chr(c) for c in payload])
             self.tree.unpack(payload_str)
             self.code_list = tree.getShortCodeList()
@@ -215,15 +215,15 @@ class Mooshimeter(object):
         assignHandle(self.meter_serin)
         wrap=[0]
         def tmp_cb():
-            print "Packet %d"%wrap[0]
+            #print "Packet %d"%wrap[0]
             wrap[0]+=1
         self.meter_serout.enableNotify(True,tmp_cb)
     def disconnect(self):
-        BGWrapper.disconnect()
+        BGWrapper.disconnect(self.p.conn_handle)
 
     def attachCallback(self,node_path,notify_cb):
         if notify_cb == None:
-            def doNothing(val):
+            def doNothing(meter,val):
                 return
             notify_cb = doNothing
         node = self.tree.getNodeAtLongname(node_path)
