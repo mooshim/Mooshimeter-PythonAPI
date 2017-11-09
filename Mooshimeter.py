@@ -61,7 +61,9 @@ class MeterSerOut(BGWrapper.Characteristic):
                     raise Exception()
                 self.aggregate = self.aggregate[b.i:]
             except UnderflowException:
-                print 'underflow'
+                # An underflow exception here does not indicate anything sinister.  It just means we had to split a packet.
+                # across multiple BLE connection events.
+                #print 'underflow'
                 return
     def unpack(self):
         b = BytePack(self.byte_value)
