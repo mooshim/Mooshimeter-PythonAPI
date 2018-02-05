@@ -13,7 +13,7 @@ class MeterSerOut(BGWrapper.Characteristic):
         """
         super(MeterSerOut,self).__init__(parent, handle, uuid)
         self.meter = meter
-        self.seq_n = 0
+        self.seq_n = -1
         self.aggregate = []
     def pack(self):
         pass
@@ -68,7 +68,7 @@ class MeterSerOut(BGWrapper.Characteristic):
     def unpack(self):
         b = BytePack(self.byte_value)
         seq_n      = b.get(1) & 0xFF
-        if seq_n != (self.seq_n+1)%0x100:
+        if (self.seq_n != -1) and (seq_n != (self.seq_n+1)%0x100):
             print 'Received out of order packet!'
             print 'Expected: %d'%(self.seq_n+1)
             print 'Got     : %d'%seq_n
