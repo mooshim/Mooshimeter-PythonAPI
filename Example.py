@@ -23,6 +23,29 @@ The script does the following:
 - Begin streaming data and printing the results to the console
 """
 
+class LogWriter(object):
+    def __init__(self,logfile):
+        self.ch1_val = None
+        self.ch2_val = None
+        self.logfile = logfile
+    def writeCh1(self, meter, val):
+        self.ch1_val = val
+        self.__decideToWrite()
+    def writeCh2(self, meter, val):
+        self.ch2_val = val
+        self.__decideToWrite()
+    def __decideToWrite(self):
+        if(self.ch1_val != None and self.ch2_val != None):
+            #write
+            t = time.time()
+            logstr = "%.3f %f %f\n"%(t,self.ch1_val,self.ch2_val)
+            print logstr
+            logfile.write(logstr)
+            logfile.flush()
+            #reset
+            self.ch1_val = None
+            self.ch2_val = None
+
 if __name__=="__main__":
     # Set up the lower level to talk to a BLED112 in port COM4
     # REPLACE THIS WITH THE BLED112 PORT ON YOUR SYSTEM
@@ -34,13 +57,14 @@ if __name__=="__main__":
         cmd_queue.append(s)
     inputthread.cb = addToQueue
     # Scan for 3 seconds
-    scan_results = BGWrapper.scan(5)
+    scan_results = BGWrapper.scan(3)
     # Filter for devices advertising the Mooshimeter service
     results_wrapped = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
     if len(results_wrapped) == 0:
         print "No Mooshimeters found"
         exit(0)
     meters = []
+
     for r in results_wrapped:
         # Use a statement like the below to filter for UUID
         #if(r.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
@@ -59,24 +83,19 @@ if __name__=="__main__":
     logfile = file('log.txt', 'w+')
     logfile.write("Log started at: %f\n"%(time.time()))
 
+    settings_file = file('settings.txt','r')
+    settings = [line.strip() for line in settings_file.readlines()]
+    # Filter out comments and empties
+    settings = [line for line in settings if (line!='' and line[0] != '#')]
+    settings_file.close()
+
     for m in meters:
-        m.sendCommand('sampling:rate 0')       # Rate 125Hz
-        m.sendCommand('sampling:depth 3')      # Depth 256
-        m.sendCommand('ch1:mapping 0')         # CH1 select current input
-        m.sendCommand('ch1:range_i 0')         # CH1 10A range
-        m.sendCommand('ch2:mapping 0')         # CH2 select voltage input
-        m.sendCommand('ch2:range_i 1')         # CH2 Voltage 600V range
+        for line in settings:
+            m.sendCommand(line)
         m.sendCommand('sampling:trigger 2')    # Trigger continuous
-        def printCH1Value(meter,val):
-            s = meter.p.getUUIDString()
-            logfile.write("%s 1: %f\n"%(s,val))
-            print "%s CH1: %f"%(s,val)
-        def printCH2Value(meter,val):
-            s = meter.p.getUUIDString()
-            logfile.write("%s 2: %f\n"%(s,val))
-            print "%s CH2: %f"%(s,val)
-        m.attachCallback('ch1:value',printCH1Value)
-        m.attachCallback('ch2:value',printCH2Value)
+        writer = LogWriter(logfile)
+        m.attachCallback('ch1:value',writer.writeCh1)
+        m.attachCallback('ch2:value',writer.writeCh2)
 
     last_heartbeat_time = time.time()
 

@@ -1,0 +1,18 @@
+# Rate 125Hz (125, 250, 500, 1000, 2000, 4000, 8000)
+sampling:rate 0
+# Depth 256 (32, 64, 128, 256)
+sampling:depth 3
+# CH1 select current i (current, temp, shared)
+ch1:mapping 0
+# CH1 10A range
+ch1:range_i 0
+# CH2 select voltage i (voltage, temp, shared)
+ch2:mapping 0
+# CH2 Voltage 600V range (60, 600)
+ch2:range_i 1
+
+
+
+
+
+
