@@ -222,7 +222,8 @@ class Mooshimeter(object):
         self.meter_serout.enableNotify(True,tmp_cb)
     def disconnect(self):
         BGWrapper.disconnect(self.p.conn_handle)
-
+    def getUUIDString(self):
+        return self.p.getUUIDString()
     def attachCallback(self,node_path,notify_cb):
         if notify_cb == None:
             def doNothing(meter,val):

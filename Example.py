@@ -25,26 +25,28 @@ The script does the following:
 
 class LogWriter(object):
     def __init__(self,logfile):
-        self.ch1_val = None
-        self.ch2_val = None
         self.logfile = logfile
-    def writeCh1(self, meter, val):
-        self.ch1_val = val
-        self.__decideToWrite()
-    def writeCh2(self, meter, val):
-        self.ch2_val = val
-        self.__decideToWrite()
-    def __decideToWrite(self):
-        if(self.ch1_val != None and self.ch2_val != None):
-            #write
+        self.val_dict = {}
+    def __addReadingForMeter(self,meter,val,channel):
+        uuid = meter.getUUIDString()
+        val_pair = self.val_dict.get(uuid,None)
+        if val_pair is None:
+            val_pair = [None,None]
+        val_pair[channel] = val
+        if not (None in val_pair):
             t = time.time()
-            logstr = "%.3f %f %f\n"%(t,self.ch1_val,self.ch2_val)
+            logstr = "%d %.3f %f %f\n"%(meter.p.conn_handle, t,val_pair[0],val_pair[1])
             print logstr
             logfile.write(logstr)
             logfile.flush()
             #reset
-            self.ch1_val = None
-            self.ch2_val = None
+            del self.val_dict[uuid]
+        else:
+            self.val_dict[uuid] = val_pair
+    def writeCh1(self, meter, val):
+        self.__addReadingForMeter(meter,val,0)
+    def writeCh2(self, meter, val):
+        self.__addReadingForMeter(meter,val,1)
 
 if __name__=="__main__":
     # Set up the lower level to talk to a BLED112 in port COM4
@@ -57,7 +59,7 @@ if __name__=="__main__":
         cmd_queue.append(s)
     inputthread.cb = addToQueue
     # Scan for 3 seconds
-    scan_results = BGWrapper.scan(3)
+    scan_results = BGWrapper.scan(5)
     # Filter for devices advertising the Mooshimeter service
     results_wrapped = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
     if len(results_wrapped) == 0:
