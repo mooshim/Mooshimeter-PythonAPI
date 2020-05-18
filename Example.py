@@ -8,7 +8,7 @@ class InputThread(threading.Thread):
         self.cb=None
     def run(self):
         while True:
-            s = raw_input()
+            s = input()
             if self.cb != None:
                 self.cb(s)
 
@@ -36,7 +36,7 @@ class LogWriter(object):
         if not (None in val_pair):
             t = time.time()
             logstr = "%d %.3f %f %f\n"%(meter.p.conn_handle, t,val_pair[0],val_pair[1])
-            print logstr
+            print(logstr)
             logfile.write(logstr)
             logfile.flush()
             #reset
@@ -51,7 +51,7 @@ class LogWriter(object):
 if __name__=="__main__":
     # Set up the lower level to talk to a BLED112 in port COM4
     # REPLACE THIS WITH THE BLED112 PORT ON YOUR SYSTEM
-    BGWrapper.initialize("COM4")
+    BGWrapper.initialize("COM11")
     inputthread = InputThread()
     inputthread.start()
     cmd_queue = []
@@ -61,9 +61,9 @@ if __name__=="__main__":
     # Scan for 3 seconds
     scan_results = BGWrapper.scan(5)
     # Filter for devices advertising the Mooshimeter service
-    results_wrapped = filter(lambda(p):Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results)
+    results_wrapped = list(filter(lambda p:Mooshimeter.mUUID.METER_SERVICE in p.ad_services, scan_results))
     if len(results_wrapped) == 0:
-        print "No Mooshimeters found"
+        print("No Mooshimeters found")
         exit(0)
     meters = []
 
@@ -113,7 +113,7 @@ if __name__=="__main__":
             cmd = cmd_queue.pop(0)
             # Carve out a special case for disconnect
             if cmd=='XXX':
-                print "Disconnecting..."
+                print("Disconnecting...")
                 for m in meters:
                     m.disconnect()
             else:

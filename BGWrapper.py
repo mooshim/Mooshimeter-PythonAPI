@@ -86,13 +86,13 @@ class Peripheral(object):
                 bytes_left = bytes_left - 1
                 if bytes_left == 0:
                     if this_field[0] == 0x02 or this_field[0] == 0x03: # partial or complete list of 16-bit UUIDs
-                        for i in xrange((len(this_field) - 1) / 2):
+                        for i in range(int((len(this_field) - 1) / 2)):
                             ad_services.append(this_field[-1 - i*2 : -3 - i*2 : -1])
                     if this_field[0] == 0x04 or this_field[0] == 0x05: # partial or complete list of 32-bit UUIDs
-                        for i in xrange((len(this_field) - 1) / 4):
+                        for i in range(int((len(this_field) - 1) / 4)):
                             ad_services.append(this_field[-1 - i*4 : -5 - i*4 : -1])
                     if this_field[0] == 0x06 or this_field[0] == 0x07: # partial or complete list of 128-bit UUIDs
-                        for i in xrange((len(this_field) - 1) / 16):
+                        for i in range(int((len(this_field) - 1) / 16)):
                             ad_services.append(this_field[-1 - i*16 : -17 - i*16 : -1])
         l=[UUID(s) for s in ad_services]
         self.ad_services = tuple(l)
@@ -101,7 +101,7 @@ class Peripheral(object):
         def notifyHandler(bglib_instance, args):
             if args['connection'] != self.conn_handle:
                 return
-            if not self.chars.has_key(args['atthandle']):
+            if not args['atthandle'] in self.chars:
                 return
             self.chars[args['atthandle']].onNotify(args['value'])
         ble.ble_evt_attclient_attribute_value += notifyHandler
@@ -109,17 +109,17 @@ class Peripheral(object):
         self.conn_handle = connect(self)
     def discover(self):
         groups = discoverServiceGroups(self.conn_handle)
-        print "Service Groups:"
+        print("Service Groups:")
         for group in groups:
-            print UUID(group['uuid'])
+            print(UUID(group['uuid']))
         for group in groups:
             new_group = discoverCharacteristics(self.conn_handle,group['start'],group['end'])
             for c in new_group:
                 # FIXME: For some reason the UUIDs are backwards
-                c['uuid'].reverse()
+                c['uuid'] = bytes(reversed(c['uuid']))
                 new_c = Characteristic(self,c['chrhandle'],UUID(c['uuid']))
                 self.chars[new_c.handle] = new_c
-                print new_c
+                print(new_c)
     def findHandleForUUID(self,uuid):
         rval = []
         for c in self.chars.values():
@@ -198,9 +198,9 @@ def initialize(port="COM4"):
             ser.flushOutput()
             stopScan()
         except serial.SerialException as e:
-            print "\n================================================================"
-            print "Port error (name='%s', baud='%ld'): %s" % (port, 115200, e)
-            print "================================================================"
+            print("\n================================================================")
+            print("Port error (name='%s', baud='%ld'): %s" % (port, 115200, e))
+            print("================================================================")
             exit(2)
 
 def idle():
@@ -249,10 +249,12 @@ def connect(scan_result):
     result = []
     def cb(bglib_instance, args):
         if (args['flags'] & 0x05) == 0x05:
-            print "Connected to %s" % ':'.join(['%02X' % b for b in args['address'][::-1]])
-            print "Interval: %dms"%(args['conn_interval']/1.25)
-            print "Connection ID: %d"%(args['connection'])
+            print("Connected to %s" % ':'.join(['%02X' % b for b in args['address'][::-1]]))
+            print("Interval: %dms"%(args['conn_interval']/1.25))
+            print("Connection ID: %d"%(args['connection']))
             result.append(args['connection'])
+        else:
+            print("What's up")
     ble.ble_evt_connection_status += cb
     while len(result) == 0:
         ble.check_activity(ser)
@@ -339,7 +341,7 @@ def read(conn, handle):
 
 def write(conn, handle, value):
     if(handle==0):
-        print "Invalid handle!  Did you forget a call to Peripheral.replaceCharacteristic(c)?"
+        print("Invalid handle!  Did you forget a call to Peripheral.replaceCharacteristic(c)?")
     ble.check_activity(ser)
     result = []
     def ackHandler(bglib_instance, args):
@@ -378,7 +380,7 @@ def __waitFor(*args):
 
 # add handler for BGAPI timeout condition (hopefully won't happen)
 def timeoutHandler(bglib_instance,args):
-    print "TIMEOUT"
+    print("TIMEOUT")
     exit(1)
 ble.on_timeout += timeoutHandler
 
@@ -386,11 +388,11 @@ if __name__ == '__main__':
     initialize()
     scan_results = scan(3)
     if len(scan_results) == 0:
-        print "No devices found"
+        print("No devices found")
         exit(0)
     closest = scan_results[0]
     for s in scan_results:
-        print s
+        print(s)
         if s.rssi > closest.rssi:
             closest = s
     closest.connect()

@@ -25,7 +25,7 @@ class MeterSerOut(BGWrapper.Characteristic):
                 try:
                     node = self.meter.code_list[shortcode]
                 except KeyError:
-                    print 'Received an unrecognized shortcode!'
+                    print('Received an unrecognized shortcode!')
                     return
                 if   node.ntype == NTYPE.PLAIN    :
                     raise Exception()
@@ -69,9 +69,9 @@ class MeterSerOut(BGWrapper.Characteristic):
         b = BytePack(self.byte_value)
         seq_n      = b.get(1) & 0xFF
         if (self.seq_n != -1) and (seq_n != (self.seq_n+1)%0x100):
-            print 'Received out of order packet!'
-            print 'Expected: %d'%(self.seq_n+1)
-            print 'Got     : %d'%seq_n
+            print('Received out of order packet!')
+            print('Expected: %d'%(self.seq_n+1))
+            print('Got     : %d'%seq_n)
         self.seq_n = seq_n
         self.aggregate += b.bytes[1:]
         # Attempt to decode a message, if we succeed pop the message off the byte queue
@@ -145,10 +145,11 @@ class Mooshimeter(object):
         # Assign an expander function to the tree node
         node = self.tree.getNodeAtLongname('ADMIN:TREE')
         def expandReceivedTree(meter,payload):
-            payload_str = ''.join([chr(c) for c in payload])
+            payload_str = bytes(payload)
             self.tree.unpack(payload_str)
             self.code_list = tree.getShortCodeList()
-            tree.enumerate()
+            # If you want to be super verbose...
+            #tree.enumerate()
             # Calculate the CRC32 of received tree
             crc_node = self.tree.getNodeAtLongname('ADMIN:CRC32')
             crc_node.value = binascii.crc32(payload_str)
@@ -164,11 +165,11 @@ class Mooshimeter(object):
             payload_str = None
         node = self.tree.getNodeAtLongname(node_str)
         if node == None:
-            print 'Node %s not found!'%node_str
+            print('Node %s not found!'%node_str)
             return
         if node.code == -1:
-            print 'This command does not have a value associated.'
-            print 'Children of this commend:'
+            print('This command does not have a value associated.')
+            print('Children of this commend:')
             self.tree.enumerate(node)
         b = BytePack()
         if not payload_str:
@@ -176,12 +177,12 @@ class Mooshimeter(object):
         else:
             b.put(node.code+0x80)
             if   node.ntype == NTYPE.PLAIN    :
-                print "This command doesn't accept a payload"
+                print("This command doesn't accept a payload")
                 return
             elif node.ntype == NTYPE.CHOOSER:
                 b.put(int(payload_str))
             elif node.ntype == NTYPE.LINK   :
-                print "This command doesn't accept a payload"
+                print("This command doesn't accept a payload")
                 return
             elif node.ntype == NTYPE.VAL_U8 :
                 b.put(int(payload_str))
@@ -199,7 +200,7 @@ class Mooshimeter(object):
                 b.put(len(payload_str),2)
                 b.put(payload_str)
             elif node.ntype == NTYPE.VAL_BIN:
-                print "This command doesn't accept a payload"
+                print("This command doesn't accept a payload")
                 return
             elif node.ntype == NTYPE.VAL_FLT:
                 b.put(float(payload_str))
@@ -231,6 +232,6 @@ class Mooshimeter(object):
             notify_cb = doNothing
         node = self.tree.getNodeAtLongname(node_path)
         if node == None:
-            print 'Could not find node at ' + node_path
+            print('Could not find node at ' + node_path)
             return
         node.notification_handler = notify_cb

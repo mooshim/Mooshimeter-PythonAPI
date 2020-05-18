@@ -91,7 +91,7 @@ class ConfigTree(object):
     def enumerate(self,n=None,indent=0):
         if n == None:
             n=self.root
-        print indent*'  ' + str(n)
+        print(indent*'  ' + str(n))
         for c in n.children:
             self.enumerate(c,indent+1)
     def serialize(self):
@@ -116,9 +116,9 @@ class ConfigTree(object):
         #self.root.packToEndOfList(l)
         #plain = msgpack.packb(l)
         plain = self.serialize()
-        print "PLAIN BYTES:",len(plain)
+        print("PLAIN BYTES:",len(plain))
         compressed = zlib.compress(plain)
-        print "COMPRESSED BYTES:",len(compressed)
+        print("COMPRESSED BYTES:",len(compressed))
         return compressed
     def unpack(self,compressed):
         plain = zlib.decompress(compressed)
