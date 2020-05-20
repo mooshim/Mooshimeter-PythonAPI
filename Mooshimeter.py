@@ -149,7 +149,7 @@ class Mooshimeter(object):
             self.tree.unpack(payload_str)
             self.code_list = tree.getShortCodeList()
             # If you want to be super verbose...
-            #tree.enumerate()
+            tree.enumerate()
             # Calculate the CRC32 of received tree
             crc_node = self.tree.getNodeAtLongname('ADMIN:CRC32')
             crc_node.value = binascii.crc32(payload_str)
@@ -206,6 +206,7 @@ class Mooshimeter(object):
                 b.put(float(payload_str))
             else:
                 raise Exception()
+        print("Sending: %s" % cmd)
         self.sendToMeter(b.bytes)
     def loadTree(self):
         self.sendCommand('ADMIN:TREE')

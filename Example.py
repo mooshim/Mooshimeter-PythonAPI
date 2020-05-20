@@ -67,6 +67,10 @@ if __name__=="__main__":
         exit(0)
     meters = []
 
+    print("Found %d meters:"%len(results_wrapped))
+    for r in results_wrapped:
+        print("  ", r)
+
     for r in results_wrapped:
         # Use a statement like the below to filter for UUID
         #if(r.sender == (0x9C,0xB4,0xA0,0x39,0xCD,0x20)):
@@ -82,10 +86,10 @@ if __name__=="__main__":
         meters.append(m)
 
     # All the meters are unlocked.  Prepare the logfile.
-    logfile = file('log.txt', 'w+')
+    logfile = open('log.txt', 'w+')
     logfile.write("Log started at: %f\n"%(time.time()))
 
-    settings_file = file('settings.txt','r')
+    settings_file = open('settings.txt','r')
     settings = [line.strip() for line in settings_file.readlines()]
     # Filter out comments and empties
     settings = [line for line in settings if (line!='' and line[0] != '#')]

@@ -44,8 +44,8 @@ class ConfigNode(object):
         self.tree = None
         self.value = value
         def default_handler(meter,payload):
-            pass
-            #print str(self) + ' default handler caught: ' + str(payload)
+            print(str(self) + ' default handler caught: ' + str(payload))
+            #pass
         self.notification_handler = default_handler
         if children!=None:
             for c in children:
